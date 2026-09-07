@@ -17,8 +17,11 @@ concurrency:
 
 jobs:
   quality:
-    name: Quality checks
+    name: Quality checks (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -30,7 +33,7 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Install dependencies
-        run: uv sync --python 3.14 --locked
+        run:  uv sync --python ${{ matrix.python-version }} --locked
 
       - name: Run linters
         run: make check

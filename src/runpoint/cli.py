@@ -1,5 +1,7 @@
 """Реализует командный интерфейс runpoint."""
 
+from __future__ import annotations
+
 import dataclasses
 import sys
 from pathlib import Path

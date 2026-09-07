@@ -1,5 +1,7 @@
 """Определяет доменные правила точек входа runpoint."""
 
+from __future__ import annotations
+
 import dataclasses
 import shlex
 from pathlib import Path

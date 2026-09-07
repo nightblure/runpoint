@@ -1,9 +1,11 @@
 """Загружает конфигурацию и dotenv-данные runpoint."""
 
+from __future__ import annotations
+
 import dataclasses
 import json
 import re
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from dotenv import dotenv_values as parse_dotenv
 
@@ -11,6 +13,8 @@ from runpoint.domain import Entrypoint, entrypoint_factory
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+_T = TypeVar("_T")
 
 
 def find_config_path(*, cwd: Path, cfg_filename: str) -> Path | None:
@@ -51,7 +55,12 @@ def load_jsonc(filepath: Path) -> object:
     return cast("object", json.loads(clean_json))
 
 
-def _require_type[T](value: object, expected_type: type[T], *, message: str) -> T:
+def _require_type(
+    value: object,
+    expected_type: type[_T],
+    *,
+    message: str,
+) -> _T:
     if not isinstance(value, expected_type):
         raise SystemExit(message)
 

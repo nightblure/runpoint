@@ -25,5 +25,12 @@ check:
 test:
 	$(UV) run pytest
 
+test_all:
+	hatch test --all
+
+# test_py v=3.10
+test_py:
+	hatch test -py $(v)
+
 build:
 	$(UV) run hatch build
