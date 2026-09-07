@@ -28,6 +28,7 @@ test:
 test_all:
 	hatch test --all
 
+# test_py v=3.10
 test_py:
 	hatch test -py $(v)
 
