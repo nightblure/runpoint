@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import ANY
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from runpoint import use_cases
@@ -57,9 +58,10 @@ def test_list_prints_entrypoints_sorted_by_alias() -> None:
     )
 
     result = runner.invoke(app, ["--list"], obj=context)
+    output = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert result.stdout == ("api       -m api\nworker    worker.py  (cwd=src)\n")
+    assert output == ("api       -m api\nworker    worker.py  (cwd=src)\n")
 
 
 def test_missing_alias_keeps_cli_error() -> None:
@@ -67,9 +69,10 @@ def test_missing_alias_keeps_cli_error() -> None:
     context = LauncherContext(config_dir=Path(), target_args=(), entrypoints=())
 
     result = runner.invoke(app, [], obj=context)
+    output = unstyle(result.output)
 
     assert result.exit_code == USAGE_ERROR_EXIT_CODE
-    assert "Нужно указать алиас точки входа; доступные алиасы: --list" in result.output
+    assert "Нужно указать алиас точки входа; доступные алиасы: --list" in output
 
 
 def test_unknown_alias_keeps_cli_error() -> None:
@@ -77,9 +80,10 @@ def test_unknown_alias_keeps_cli_error() -> None:
     context = LauncherContext(config_dir=Path(), target_args=(), entrypoints=())
 
     result = runner.invoke(app, ["missing"], obj=context)
+    output = unstyle(result.output)
 
     assert result.exit_code == USAGE_ERROR_EXIT_CODE
-    assert "Алиас 'missing' не найден" in result.output
+    assert "Алиас 'missing' не найден" in output
 
 
 def test_run_delegates_selected_entrypoint_and_options(
