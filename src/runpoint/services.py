@@ -1,9 +1,11 @@
 """Выполняет runtime-операции запуска точки входа."""
 
+from __future__ import annotations
+
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, NoReturn
 
 from runpoint import data
 
@@ -148,7 +150,7 @@ def replace_process(
     working_dir: Path,
     command: list[str],
     environment: dict[str, str],
-) -> Never:
+) -> NoReturn:
     """Заменяет текущий процесс настроенной Python-командой."""
     # execvpe does not flush Python buffers. No subprocess is created: on POSIX
     # the current process image is replaced while PID/process group/stdio stay.

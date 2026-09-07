@@ -1,7 +1,9 @@
 """Координирует запуск настроенной точки входа."""
 
+from __future__ import annotations
+
 import shlex
-from typing import TYPE_CHECKING, Never
+from typing import TYPE_CHECKING, NoReturn
 
 from runpoint import services
 
@@ -24,7 +26,7 @@ def launch_entrypoint(  # noqa: PLR0913 -- parameters are explicit use-case inpu
     no_env: bool,
     print_message: Callable[[str], None],
     print_debug: Callable[[str], None],
-) -> Never:
+) -> NoReturn:
     """Подготавливает запуск и заменяет текущий процесс точкой входа."""
     working_dir = services.resolve_working_directory(
         config_dir=config_dir,

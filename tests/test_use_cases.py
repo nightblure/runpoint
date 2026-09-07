@@ -1,5 +1,7 @@
 """Проверяет координацию запуска точки входа."""
 
+from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from runpoint import services
