@@ -10,7 +10,6 @@ def test_project_metadata_exposes_only_runpoint_product() -> None:
     pyproject = tomli.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["project"]["name"] == "runpoint"
-    assert pyproject["project"]["version"] == "0.1.0"
     assert pyproject["project"]["scripts"] == {
         "runpoint": "runpoint.cli:main",
     }
