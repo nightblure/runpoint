@@ -1,0 +1,72 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "runpoint"
+version = "0.1.0"
+description = "CLI launcher for configured Python entry points"
+readme = "README.md"
+requires-python = "~=3.14.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = [
+    "debugpy",
+    "python-dotenv",
+    "rich",
+    "typer",
+]
+
+[project.scripts]
+runpoint = "runpoint.cli:main"
+
+[dependency-groups]
+dev = [
+    { include-group = "quality" },
+    "hatch",
+    "pytest",
+]
+quality = [
+    "ruff",
+    "ty",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/runpoint"]
+
+[tool.hatch.envs.default]
+python = "3.14"
+installer = "uv"
+dependency-groups = ["quality"]
+
+[tool.ruff]
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+allowed-confusables = ["Н", "б", "е", "о", "с"]
+ignore = [
+    "CPY001", # Copyright owner is not defined in project metadata.
+    "COM812", # Conflicts with the formatter.
+    "D203",   # Conflicts with D211.
+    "D213",   # Conflicts with D212.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"] # Plain assertions are the pytest interface.
+
+[tool.ty.src]
+include = ["src", "tests"]
+
+[tool.ty.rules]
+all = "error"
+
+[tool.pytest.ini_options]
+addopts = ["--strict-config", "--strict-markers", "-ra"]
+testpaths = ["tests"]
