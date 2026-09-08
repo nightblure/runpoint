@@ -26,14 +26,14 @@ make build
 `runpoint` looks for `.runpoint.json` or `.runpoint.jsonc` in the current and
 parent directories. The file's root must be a list of entry points:
 
-```json
+```jsonc
 [
   {
     "alias": "tests",
     "command": "-m pytest",
-    "cwd": ".",
-    "venv": ".venv",
-    "load_env_file": false
+    "cwd": ".",             // default value. useful for monorepo with any codebase depth
+    "venv": ".venv",        // default value
+    "load_env_file": false  // default value
   }
 ]
 ```
