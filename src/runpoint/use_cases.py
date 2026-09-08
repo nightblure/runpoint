@@ -14,9 +14,6 @@ if TYPE_CHECKING:
 
     from runpoint.domain import Entrypoint
 
-DEFAULT_PYTHON_DEBUG_PORT = 5678
-DEFAULT_GO_DEBUG_PORT = 2345
-
 
 def launch_entrypoint(  # noqa: PLR0913 -- parameters are explicit use-case inputs
     *,
@@ -36,51 +33,16 @@ def launch_entrypoint(  # noqa: PLR0913 -- parameters are explicit use-case inpu
         config_dir=config_dir,
         entrypoint=entrypoint,
     )
-    if entrypoint.runtime is Runtime.GO:
-        if debug:
-            if entrypoint.command_args()[0] == "build":
-                message = "Отладка Go-команды 'build' не поддерживается"
-                raise SystemExit(message)
 
-            delve_executable = services.resolve_delve_executable()
-
-            if debug_port is None:
-                debug_port = DEFAULT_GO_DEBUG_PORT
-
-            command = services.build_go_debug_command(
-                delve_executable=delve_executable,
-                entrypoint=entrypoint,
-                target_args=target_args,
-                port=debug_port,
-                continue_immediately=no_debug_wait,
-            )
-        else:
-            go_executable = services.resolve_go_executable()
-            command = services.build_go_command(
-                go_executable=go_executable,
-                entrypoint=entrypoint,
-                target_args=target_args,
-            )
-    else:
-        python_executable = services.resolve_python_executable(
-            working_dir=working_dir,
-            entrypoint=entrypoint,
-        )
-
-        services.validate_target(working_dir=working_dir, entrypoint=entrypoint)
-
-        if debug_port is None:
-            debug_port = DEFAULT_PYTHON_DEBUG_PORT
-
-        command = services.build_command(
-            debug=debug,
-            port=debug_port,
-            entrypoint=entrypoint,
-            python_executable=python_executable,
-            target_args=target_args,
-            wait_for_client=not no_debug_wait,
-            debug_subprocesses=debug_subprocesses,
-        )
+    command = services.build_command(
+        entrypoint=entrypoint,
+        debug=debug,
+        debug_port=debug_port,
+        working_dir=working_dir,
+        debug_subprocesses=debug_subprocesses,
+        no_debug_wait=no_debug_wait,
+        target_args=target_args,
+    )
 
     print_message(f"working_dir: {working_dir}")
 

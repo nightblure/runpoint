@@ -6,7 +6,7 @@ import pytest
 
 from runpoint.domain import entrypoint_factory
 from runpoint.services import (
-    build_command,
+    build_python_command,
     load_env_variables,
     resolve_python_executable,
     validate_target,
@@ -17,7 +17,7 @@ def test_build_command_configures_debugpy_and_preserves_target_args() -> None:
     """Формирует полный debugpy-вызов с аргументами приложения."""
     entrypoint = entrypoint_factory(alias="worker", command="worker --mode safe")
 
-    command = build_command(
+    command = build_python_command(
         port=5679,
         debug=True,
         python_executable=Path("/project/.venv/bin/python"),
@@ -52,7 +52,7 @@ def test_build_command_without_debug_runs_target_directly() -> None:
         alias="worker", command="python worker.py --mode safe"
     )
 
-    command = build_command(
+    command = build_python_command(
         port=5678,
         debug=False,
         python_executable=Path("/project/.venv/bin/python"),

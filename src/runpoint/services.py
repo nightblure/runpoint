@@ -9,11 +9,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from runpoint import data
+from runpoint.domain import Runtime
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from runpoint.domain import Entrypoint
+
+DEFAULT_PYTHON_DEBUG_PORT = 5678
+DEFAULT_GO_DEBUG_PORT = 2345
 
 
 def resolve_working_directory(*, config_dir: Path, entrypoint: Entrypoint) -> Path:
@@ -131,7 +135,67 @@ def env_loading_notice(
     return None
 
 
-def build_command(  # noqa: PLR0913 -- arguments map directly to CLI options
+def build_command(  # noqa: PLR0913
+    *,
+    working_dir: Path,
+    entrypoint: Entrypoint,
+    target_args: Sequence[str],
+    debug: bool,
+    debug_port: int | None,
+    no_debug_wait: bool,
+    debug_subprocesses: bool,
+) -> list[str]:
+    """Implement general command build logic."""
+    if entrypoint.runtime is Runtime.GO:
+        if debug:
+            if entrypoint.command_args()[0] == "build":
+                message = "Отладка Go-команды 'build' не поддерживается"
+                raise SystemExit(message)
+
+            delve_executable = resolve_delve_executable()
+
+            if debug_port is None:
+                debug_port = DEFAULT_GO_DEBUG_PORT
+
+            command = build_go_debug_command(
+                delve_executable=delve_executable,
+                entrypoint=entrypoint,
+                target_args=target_args,
+                port=debug_port,
+                continue_immediately=no_debug_wait,
+            )
+        else:
+            go_executable = resolve_go_executable()
+            command = build_go_command(
+                go_executable=go_executable,
+                entrypoint=entrypoint,
+                target_args=target_args,
+            )
+    else:
+        python_executable = resolve_python_executable(
+            working_dir=working_dir,
+            entrypoint=entrypoint,
+        )
+
+        validate_target(working_dir=working_dir, entrypoint=entrypoint)
+
+        if debug_port is None:
+            debug_port = DEFAULT_PYTHON_DEBUG_PORT
+
+        command = build_python_command(
+            debug=debug,
+            port=debug_port,
+            entrypoint=entrypoint,
+            python_executable=python_executable,
+            target_args=target_args,
+            wait_for_client=not no_debug_wait,
+            debug_subprocesses=debug_subprocesses,
+        )
+
+    return command
+
+
+def build_python_command(  # noqa: PLR0913 -- arguments map directly to CLI options
     *,
     port: int,
     debug: bool,
@@ -207,6 +271,7 @@ def build_go_debug_command(
 
     target_count = len(configured_args) - 1
     invalid_target = target_count == 1 and configured_args[1].startswith("-")
+
     if target_count > 1 or invalid_target or (operation == "run" and target_count != 1):
         message = (
             f"Некорректный target Go-команды {operation!r}; "
@@ -220,7 +285,7 @@ def build_go_debug_command(
     ):
         message = (
             f"Go debug не поддерживает package-паттерн {configured_args[1]!r}; "
-            "укажите один Go package"
+            f"укажите один Go package"
         )
         raise SystemExit(message)
 
