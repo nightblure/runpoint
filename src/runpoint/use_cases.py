@@ -6,6 +6,7 @@ import shlex
 from typing import TYPE_CHECKING, NoReturn
 
 from runpoint import services
+from runpoint.domain import Runtime
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -20,7 +21,7 @@ def launch_entrypoint(  # noqa: PLR0913 -- parameters are explicit use-case inpu
     entrypoint: Entrypoint,
     target_args: Sequence[str],
     debug: bool,
-    debug_port: int,
+    debug_port: int | None,
     no_debug_wait: bool,
     debug_subprocesses: bool,
     no_env: bool,
@@ -32,23 +33,18 @@ def launch_entrypoint(  # noqa: PLR0913 -- parameters are explicit use-case inpu
         config_dir=config_dir,
         entrypoint=entrypoint,
     )
-    python_executable = services.resolve_python_executable(
-        working_dir=working_dir,
-        entrypoint=entrypoint,
-    )
-    services.validate_target(working_dir=working_dir, entrypoint=entrypoint)
-
-    print_message(f"working_dir: {working_dir}")
 
     command = services.build_command(
-        debug=debug,
-        port=debug_port,
         entrypoint=entrypoint,
-        python_executable=python_executable,
-        target_args=target_args,
-        wait_for_client=not no_debug_wait,
+        debug=debug,
+        debug_port=debug_port,
+        working_dir=working_dir,
         debug_subprocesses=debug_subprocesses,
+        no_debug_wait=no_debug_wait,
+        target_args=target_args,
     )
+
+    print_message(f"working_dir: {working_dir}")
 
     print_message(f"cmd: {shlex.join(command)}")
 
@@ -66,9 +62,15 @@ def launch_entrypoint(  # noqa: PLR0913 -- parameters are explicit use-case inpu
     if notice is not None:
         print_message(notice)
 
-    env_variables.setdefault("PYDEVD_DISABLE_FILE_VALIDATION", "1")
+    if entrypoint.runtime is Runtime.PYTHON:
+        env_variables.setdefault("PYDEVD_DISABLE_FILE_VALIDATION", "1")
 
-    if debug:
+    if debug and entrypoint.runtime is Runtime.GO:
+        wait_status = (
+            "Ожидание подключения IDE" if not no_debug_wait else "без ожидания IDE"
+        )
+        print_debug(f"dlv: 127.0.0.1:{debug_port} ({wait_status})")
+    elif debug:
         wait_status = (
             "Ожидание подключения IDE" if not no_debug_wait else "без ожидания IDE"
         )

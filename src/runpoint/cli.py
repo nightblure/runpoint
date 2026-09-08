@@ -15,8 +15,6 @@ from runpoint import data, domain, use_cases
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-DEFAULT_DEBUG_PORT = 5678
-
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class LauncherContext:
@@ -75,7 +73,7 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 
 @app.command(
-    help="Запускает одну точку входа Python",
+    help="Запускает одну точку входа Python или Go",
     epilog=(
         "Аргументы точки входа передаются после '--', например: "
         "runpoint testcur -- -k test_name"
@@ -95,17 +93,17 @@ def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
         bool,
         typer.Option(
             "--debug",
-            help="запустить через debugpy и принять DAP-подключение",
+            help="запустить через debugpy или Delve и принять подключение от IDE",
         ),
     ] = False,
     debug_port: Annotated[
-        int,
+        int | None,
         typer.Option(
             "--debug-port",
             metavar="PORT",
-            help=f"порт debugpy (по умолчанию: {DEFAULT_DEBUG_PORT})",
+            help="порт отладочного сервера",
         ),
-    ] = DEFAULT_DEBUG_PORT,
+    ] = None,
     no_debug_wait: Annotated[  # noqa: FBT002 -- Typer boolean option
         bool,
         typer.Option(
@@ -145,6 +143,15 @@ def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
         ctx.fail(f"Алиас {alias!r} не найден")
 
     entrypoint = alias_to_entrypoint[alias]
+    debug_subprocesses_source = ctx.get_parameter_source("debug_subprocesses")
+
+    if (
+        entrypoint.runtime is domain.Runtime.GO
+        and debug_subprocesses_source is not None
+        and debug_subprocesses_source.name == "COMMANDLINE"
+    ):
+        ctx.fail("--debug-subprocesses не поддерживается для Go")
+
     use_cases.launch_entrypoint(
         config_dir=launcher_ctx.config_dir,
         entrypoint=entrypoint,

@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
 from runpoint import data
+from runpoint.domain import Runtime
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from runpoint.domain import Entrypoint
+
+DEFAULT_PYTHON_DEBUG_PORT = 5678
+DEFAULT_GO_DEBUG_PORT = 2345
 
 
 def resolve_working_directory(*, config_dir: Path, entrypoint: Entrypoint) -> Path:
@@ -48,6 +53,28 @@ def resolve_python_executable(*, working_dir: Path, entrypoint: Entrypoint) -> P
     raise SystemExit(message)
 
 
+def resolve_go_executable() -> Path:
+    """Находит Go toolchain через PATH."""
+    executable = shutil.which("go")
+
+    if executable is None:
+        message = "Исполняемый файл 'go' не найден в PATH. Установите Go."
+        raise SystemExit(message)
+
+    return Path(executable).resolve()
+
+
+def resolve_delve_executable() -> Path:
+    """Находит Delve через PATH."""
+    executable = shutil.which("dlv")
+
+    if executable is None:
+        message = "Исполняемый файл 'dlv' не найден в PATH. Установите Delve."
+        raise SystemExit(message)
+
+    return Path(executable).resolve()
+
+
 def validate_target(*, working_dir: Path, entrypoint: Entrypoint) -> None:
     """Проверяет существование запускаемого Python-скрипта."""
     target = entrypoint.command_args()
@@ -62,8 +89,8 @@ def validate_target(*, working_dir: Path, entrypoint: Entrypoint) -> None:
     if not script_path.is_file():
         message = (
             f"Python-скрипт точки входа {entrypoint.alias!r} не найден: "
-            f"{script_path.resolve()}. Для запуска модуля используйте '-m <module>', "
-            "например '-m pytest'."
+            f"{script_path.resolve()}. Для запуска модуля укажите явно: "
+            "python -m <module>, например 'python -m pytest'."
         )
         raise SystemExit(message)
 
@@ -108,7 +135,67 @@ def env_loading_notice(
     return None
 
 
-def build_command(  # noqa: PLR0913 -- arguments map directly to CLI options
+def build_command(  # noqa: PLR0913
+    *,
+    working_dir: Path,
+    entrypoint: Entrypoint,
+    target_args: Sequence[str],
+    debug: bool,
+    debug_port: int | None,
+    no_debug_wait: bool,
+    debug_subprocesses: bool,
+) -> list[str]:
+    """Implement general command build logic."""
+    if entrypoint.runtime is Runtime.GO:
+        if debug:
+            if entrypoint.command_args()[0] == "build":
+                message = "Отладка Go-команды 'build' не поддерживается"
+                raise SystemExit(message)
+
+            delve_executable = resolve_delve_executable()
+
+            if debug_port is None:
+                debug_port = DEFAULT_GO_DEBUG_PORT
+
+            command = build_go_debug_command(
+                delve_executable=delve_executable,
+                entrypoint=entrypoint,
+                target_args=target_args,
+                port=debug_port,
+                continue_immediately=no_debug_wait,
+            )
+        else:
+            go_executable = resolve_go_executable()
+            command = build_go_command(
+                go_executable=go_executable,
+                entrypoint=entrypoint,
+                target_args=target_args,
+            )
+    else:
+        python_executable = resolve_python_executable(
+            working_dir=working_dir,
+            entrypoint=entrypoint,
+        )
+
+        validate_target(working_dir=working_dir, entrypoint=entrypoint)
+
+        if debug_port is None:
+            debug_port = DEFAULT_PYTHON_DEBUG_PORT
+
+        command = build_python_command(
+            debug=debug,
+            port=debug_port,
+            entrypoint=entrypoint,
+            python_executable=python_executable,
+            target_args=target_args,
+            wait_for_client=not no_debug_wait,
+            debug_subprocesses=debug_subprocesses,
+        )
+
+    return command
+
+
+def build_python_command(  # noqa: PLR0913 -- arguments map directly to CLI options
     *,
     port: int,
     debug: bool,
@@ -145,13 +232,91 @@ def build_command(  # noqa: PLR0913 -- arguments map directly to CLI options
     return command
 
 
+def build_go_command(
+    *,
+    go_executable: Path,
+    entrypoint: Entrypoint,
+    target_args: Sequence[str],
+) -> list[str]:
+    """Формирует команду обычного запуска через Go toolchain."""
+    return [str(go_executable), *entrypoint.command_args(), *target_args]
+
+
+def build_go_debug_command(
+    *,
+    delve_executable: Path,
+    entrypoint: Entrypoint,
+    target_args: Sequence[str],
+    port: int,
+    continue_immediately: bool,
+) -> list[str]:
+    """Формирует команду отладки Go target через Delve."""
+    configured_args = entrypoint.command_args()
+    operation = configured_args[0]
+
+    if operation == "run":
+        delve_command = "debug"
+    elif operation == "test":
+        delve_command = "test"
+    else:
+        message = "Go debug поддерживает только команды 'run' и 'test'"
+        raise SystemExit(message)
+
+    if operation == "test" and continue_immediately:
+        message = (
+            "--no-debug-wait не поддерживается для Go-команды 'test': "
+            "dlv test не принимает --continue"
+        )
+        raise SystemExit(message)
+
+    target_count = len(configured_args) - 1
+    invalid_target = target_count == 1 and configured_args[1].startswith("-")
+
+    if target_count > 1 or invalid_target or (operation == "run" and target_count != 1):
+        message = (
+            f"Некорректный target Go-команды {operation!r}; "
+            "аргументы target передавайте после '--'"
+        )
+        raise SystemExit(message)
+
+    if target_count == 1 and (
+        "..." in configured_args[1]
+        or configured_args[1] in {"all", "std", "cmd", "tool"}
+    ):
+        message = (
+            f"Go debug не поддерживает package-паттерн {configured_args[1]!r}; "
+            f"укажите один Go package"
+        )
+        raise SystemExit(message)
+
+    command = [
+        str(delve_executable),
+        delve_command,
+        "--headless",
+        f"--listen=127.0.0.1:{port}",
+        "--api-version=2",
+        "--accept-multiclient",
+    ]
+
+    if continue_immediately:
+        command.append("--continue")
+
+    command.extend(configured_args[1:])
+
+    if target_args:
+        command.append("--")
+        command.extend(target_args)
+
+    return command
+
+
 def replace_process(
     *,
     working_dir: Path,
     command: list[str],
     environment: dict[str, str],
 ) -> NoReturn:
-    """Заменяет текущий процесс настроенной Python-командой."""
+    """Заменяет текущий процесс настроенной командой."""
     # execvpe does not flush Python buffers. No subprocess is created: on POSIX
     # the current process image is replaced while PID/process group/stdio stay.
     sys.stdout.flush()

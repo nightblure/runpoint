@@ -6,7 +6,7 @@ import pytest
 
 from runpoint.domain import entrypoint_factory
 from runpoint.services import (
-    build_command,
+    build_python_command,
     load_env_variables,
     resolve_python_executable,
     validate_target,
@@ -15,9 +15,9 @@ from runpoint.services import (
 
 def test_build_command_configures_debugpy_and_preserves_target_args() -> None:
     """Формирует полный debugpy-вызов с аргументами приложения."""
-    entrypoint = entrypoint_factory(alias="worker", command="-m worker --mode safe")
+    entrypoint = entrypoint_factory(alias="worker", command="worker --mode safe")
 
-    command = build_command(
+    command = build_python_command(
         port=5679,
         debug=True,
         python_executable=Path("/project/.venv/bin/python"),
@@ -48,9 +48,11 @@ def test_build_command_configures_debugpy_and_preserves_target_args() -> None:
 
 def test_build_command_without_debug_runs_target_directly() -> None:
     """Не добавляет debugpy к обычному запуску."""
-    entrypoint = entrypoint_factory(alias="worker", command="worker.py --mode safe")
+    entrypoint = entrypoint_factory(
+        alias="worker", command="python worker.py --mode safe"
+    )
 
-    command = build_command(
+    command = build_python_command(
         port=5678,
         debug=False,
         python_executable=Path("/project/.venv/bin/python"),
@@ -84,7 +86,7 @@ def test_load_env_variables_applies_documented_precedence(
     monkeypatch.setenv("PROCESS_ONLY", "process")
     entrypoint = entrypoint_factory(
         alias="api",
-        command="-m api",
+        command="api",
         load_env_file=True,
         env={"SHARED": "entrypoint", "ENTRYPOINT_ONLY": "entrypoint"},
     )
@@ -114,11 +116,11 @@ def test_load_env_variables_applies_documented_precedence(
 @pytest.mark.parametrize(
     "command",
     [
-        "-m pytest",
-        "-m unittest discover",
-        "-m tox",
-        "-m nox",
-        "test.py",
+        "pytest",
+        "unittest discover",
+        "tox",
+        "nox",
+        "python test.py",
     ],
 )
 def test_load_env_variables_skips_dotenv_for_test_runners(
@@ -158,7 +160,7 @@ def test_load_env_variables_skips_missing_dotenv_for_test_runner(
     monkeypatch.setenv("PROCESS_ONLY", "process")
     entrypoint = entrypoint_factory(
         alias="tests",
-        command="-m pytest",
+        command="pytest",
         env_file="missing.env",
         env={"ENTRYPOINT_ONLY": "entrypoint"},
     )
@@ -184,7 +186,7 @@ def test_load_env_variables_no_env_skips_missing_dotenv(
     monkeypatch.setenv("PROCESS_VALUE", "process")
     entrypoint = entrypoint_factory(
         alias="api",
-        command="-m api",
+        command="api",
         env_file="missing.env",
         load_env_file=True,
         env={"ENTRYPOINT_VALUE": "entrypoint"},
@@ -208,7 +210,7 @@ def test_resolve_python_executable_falls_back_to_python3(tmp_path: Path) -> None
     bin_dir.mkdir(parents=True)
     python_executable = bin_dir / "python3"
     python_executable.touch()
-    entrypoint = entrypoint_factory(alias="api", command="-m api")
+    entrypoint = entrypoint_factory(alias="api", command="api")
 
     resolved = resolve_python_executable(
         working_dir=tmp_path,
@@ -220,7 +222,7 @@ def test_resolve_python_executable_falls_back_to_python3(tmp_path: Path) -> None
 
 def test_validate_target_rejects_missing_script(tmp_path: Path) -> None:
     """Сообщает об отсутствующем файловом target."""
-    entrypoint = entrypoint_factory(alias="worker", command="missing.py")
+    entrypoint = entrypoint_factory(alias="worker", command="python missing.py")
 
     with pytest.raises(SystemExit, match=r"Python-скрипт .* не найден"):
         validate_target(working_dir=tmp_path, entrypoint=entrypoint)
@@ -228,6 +230,6 @@ def test_validate_target_rejects_missing_script(tmp_path: Path) -> None:
 
 def test_validate_target_accepts_module_without_file_lookup(tmp_path: Path) -> None:
     """Не требует локального файла для запуска через -m."""
-    entrypoint = entrypoint_factory(alias="worker", command="-m external_worker")
+    entrypoint = entrypoint_factory(alias="worker", command="external_worker")
 
     validate_target(working_dir=tmp_path, entrypoint=entrypoint)
