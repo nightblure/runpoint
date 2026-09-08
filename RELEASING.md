@@ -32,6 +32,12 @@ git tag -a "v${VERSION}" -m "runpoint v${VERSION}"
 git push origin "v${VERSION}"
 ```
 
+Удаление тегов:
+```shell
+git tag -d <tag>
+git push --delete origin <tag>
+```
+
 Тег должен совпадать с `project.version`. Push тега `v*` запускает проверки, сборку wheel/sdist и создание GitHub Release.
 
 ## 3. Проверить релиз

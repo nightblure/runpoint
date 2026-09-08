@@ -1,18 +1,18 @@
 # runpoint
 
-CLI для запуска настроенных Python entry points в виртуальных окружениях проектов.
+A CLI for running configured Python entry points in project virtual environments.
 
-## Локальная установка
+## Local installation
 
-Для разработки проект использует Python 3.14 и `uv`. Устанавливаемый пакет
-поддерживает Python 3.10 и новее.
+The project uses Python 3.14 and `uv` for development. The installable package
+supports Python 3.10 and newer.
 
 ```shell
 make sync
 ```
 
-`uv` устанавливает зависимости, Hatch собирает пакет, а локальные команды запускаются
-через Make:
+`uv` installs the dependencies, Hatch builds the package, and local commands are
+run through Make:
 
 ```shell
 make lint
@@ -21,10 +21,10 @@ make test
 make build
 ```
 
-## Конфигурация
+## Configuration
 
-`runpoint` ищет `.runpoint.json` или `.runpoint.jsonc` в текущей и родительских
-директориях. Корнем файла должен быть список точек входа:
+`runpoint` looks for `.runpoint.json` or `.runpoint.jsonc` in the current and
+parent directories. The file's root must be a list of entry points:
 
 ```json
 [
@@ -38,16 +38,11 @@ make build
 ]
 ```
 
-Пути `cwd` и `env_file` задаются относительно директории конфигурации. Путь
-`venv` задаётся относительно `cwd`.
+The `cwd` and `env_file` paths are set relative to the configuration directory.
+The `venv` path is set relative to `cwd`.
 
-## Использование
+## Usage
 
 ```shell
-runpoint --list
-runpoint <alias>
-runpoint <alias> -- --queue priority --limit 10
-runpoint <alias> --debug
-runpoint <alias> --debug --debug-port 5679 --no-debug-wait
-runpoint --install-completion
+runpoint --help
 ```
