@@ -4,6 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runpoint"
+package = false
 version = "0.3.0"
 description = "CLI launcher for configured Python and Go entry points"
 readme = "README.md"
