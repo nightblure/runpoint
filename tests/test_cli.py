@@ -22,7 +22,7 @@ def test_main_discovers_runpoint_jsonc_config(
     """Находит новый JSONC-конфиг через публичный bootstrap CLI."""
     config_path = tmp_path / ".runpoint.jsonc"
     config_path.write_text(
-        '[{"alias": "api", "command": "-m api"}]',
+        '[{"alias": "api", "command": "python -m api"}]',
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -52,8 +52,8 @@ def test_list_prints_entrypoints_sorted_by_alias() -> None:
         config_dir=Path("/project"),
         target_args=(),
         entrypoints=(
-            entrypoint_factory(alias="worker", command="worker.py", cwd="src"),
-            entrypoint_factory(alias="api", command="-m api"),
+            entrypoint_factory(alias="worker", command="python worker.py", cwd="src"),
+            entrypoint_factory(alias="api", command="python -m api"),
         ),
     )
 
@@ -61,7 +61,9 @@ def test_list_prints_entrypoints_sorted_by_alias() -> None:
     output = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert output == ("api       -m api\nworker    worker.py  (cwd=src)\n")
+    assert output == (
+        "api       python -m api\nworker    python worker.py  (cwd=src)\n"
+    )
 
 
 def test_missing_alias_keeps_cli_error() -> None:
@@ -90,7 +92,7 @@ def test_run_delegates_selected_entrypoint_and_options(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Передаёт use-case выбранную точку входа и параметры запуска."""
-    entrypoint = entrypoint_factory(alias="worker", command="-m worker")
+    entrypoint = entrypoint_factory(alias="worker", command="worker")
     context = LauncherContext(
         config_dir=Path("/project"),
         target_args=("--limit", "10"),
@@ -124,3 +126,39 @@ def test_run_delegates_selected_entrypoint_and_options(
             "print_debug": ANY,
         }
     ]
+
+
+def test_run_rejects_only_explicit_debug_subprocesses_for_go(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rejects the Python-only option for Go only when explicitly supplied."""
+    entrypoint = entrypoint_factory(
+        alias="go-api",
+        command="go run ./cmd/api",
+    )
+    context = LauncherContext(
+        config_dir=Path("/project"),
+        target_args=(),
+        entrypoints=(entrypoint,),
+    )
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        use_cases,
+        "launch_entrypoint",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    default_result = runner.invoke(app, ["go-api", "--debug"], obj=context)
+    explicit_result = runner.invoke(
+        app,
+        ["go-api", "--debug", "--debug-subprocesses"],
+        obj=context,
+    )
+
+    assert default_result.exit_code == 0
+    assert len(calls) == 1
+    assert explicit_result.exit_code == USAGE_ERROR_EXIT_CODE
+    assert "--debug-subprocesses не поддерживается для Go" in unstyle(
+        explicit_result.output
+    )
