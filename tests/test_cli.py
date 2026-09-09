@@ -13,6 +13,7 @@ from runpoint.domain import entrypoint_factory
 
 runner = CliRunner()
 USAGE_ERROR_EXIT_CODE = 2
+CHILD_EXIT_CODE = 42
 
 
 def test_main_discovers_runpoint_jsonc_config(
@@ -107,7 +108,7 @@ def test_run_delegates_selected_entrypoint_and_options(
 
     result = runner.invoke(
         app,
-        ["worker", "--debug", "--debug-port", "5679", "--no-debug-wait", "--no-env"],
+        ["worker", "--debug", "--debug-port", "5679", "--no-env"],
         obj=context,
     )
 
@@ -119,8 +120,6 @@ def test_run_delegates_selected_entrypoint_and_options(
             "target_args": ("--limit", "10"),
             "debug": True,
             "debug_port": 5679,
-            "no_debug_wait": True,
-            "debug_subprocesses": True,
             "no_env": True,
             "print_message": ANY,
             "print_debug": ANY,
@@ -128,37 +127,43 @@ def test_run_delegates_selected_entrypoint_and_options(
     ]
 
 
-def test_run_rejects_only_explicit_debug_subprocesses_for_go(
+def test_run_propagates_python_debug_exit_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Rejects the Python-only option for Go only when explicitly supplied."""
-    entrypoint = entrypoint_factory(
-        alias="go-api",
-        command="go run ./cmd/api",
-    )
+    """Пробрасывает exit code дочернего отладочного процесса."""
+    entrypoint = entrypoint_factory(alias="worker", command="worker")
     context = LauncherContext(
         config_dir=Path("/project"),
         target_args=(),
         entrypoints=(entrypoint,),
     )
-    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        use_cases, "launch_entrypoint", lambda **_kwargs: CHILD_EXIT_CODE
+    )
 
+    result = runner.invoke(app, ["worker", "--debug"], obj=context)
+
+    assert result.exit_code == CHILD_EXIT_CODE
+
+
+@pytest.mark.parametrize("option", ["--no-debug-wait", "--debug-subprocesses"])
+def test_run_rejects_removed_debug_options(
+    monkeypatch: pytest.MonkeyPatch,
+    option: str,
+) -> None:
+    """Удалённые debug-опции отклоняются как неизвестные."""
+    entrypoint = entrypoint_factory(alias="worker", command="worker")
+    context = LauncherContext(
+        config_dir=Path("/project"),
+        target_args=(),
+        entrypoints=(entrypoint,),
+    )
     monkeypatch.setattr(
         use_cases,
         "launch_entrypoint",
-        lambda **kwargs: calls.append(kwargs),
+        lambda **_kwargs: pytest.fail("launch_entrypoint не должен вызываться"),
     )
 
-    default_result = runner.invoke(app, ["go-api", "--debug"], obj=context)
-    explicit_result = runner.invoke(
-        app,
-        ["go-api", "--debug", "--debug-subprocesses"],
-        obj=context,
-    )
+    result = runner.invoke(app, ["worker", "--debug", option], obj=context)
 
-    assert default_result.exit_code == 0
-    assert len(calls) == 1
-    assert explicit_result.exit_code == USAGE_ERROR_EXIT_CODE
-    assert "--debug-subprocesses не поддерживается для Go" in unstyle(
-        explicit_result.output
-    )
+    assert result.exit_code == USAGE_ERROR_EXIT_CODE

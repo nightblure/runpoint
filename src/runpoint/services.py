@@ -2,22 +2,330 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import shutil
+import subprocess
 import sys
-from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+import tempfile
+from contextlib import suppress
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+import psutil
 
 from runpoint import data
 from runpoint.domain import Runtime
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from runpoint.domain import Entrypoint
 
 DEFAULT_PYTHON_DEBUG_PORT = 5678
 DEFAULT_GO_DEBUG_PORT = 2345
+
+_STALE_DEBUG_PROCESS_TERMINATION_TIMEOUT_SECONDS = 2.0
+_CHILD_GRACE_SECONDS = 5.0
+
+
+@runtime_checkable
+class StaleDebuggerMatcher(Protocol):
+    """Определяет, принадлежит ли cmdline зависшему отладчику на порту."""
+
+    def matches(self, *, cmdline: list[str], port: int) -> bool:
+        """Определяет принадлежность процесса зависшему отладчику."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DebugpyAdapterMatcher:
+    """Совпадает с процессом debugpy-адаптера на точном --port."""
+
+    def matches(self, *, cmdline: list[str], port: int) -> bool:
+        """Совпадает, когда cmdline — debugpy-адаптер с точным --port."""
+        if not any(_is_debugpy_adapter_path(argument) for argument in cmdline):
+            return False
+
+        if "--for-server" not in cmdline:
+            return False
+
+        return _has_exact_option(args=cmdline, option="--port", value=str(port))
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DelveMatcher:
+    """Совпадает с headless-сервером Delve на точном --listen-порту."""
+
+    def matches(self, *, cmdline: list[str], port: int) -> bool:
+        """Совпадает, когда cmdline — dlv/delve с точным --listen-портом."""
+        if not cmdline:
+            return False
+
+        if Path(cmdline[0]).name not in {"dlv", "delve"}:
+            return False
+
+        return _has_listen_port(args=cmdline, port=port)
+
+
+_STALE_DEBUGGER_MATCHERS: dict[Runtime, tuple[StaleDebuggerMatcher, ...]] = {
+    Runtime.PYTHON: (DebugpyAdapterMatcher(),),
+    Runtime.GO: (DelveMatcher(),),
+}
+
+
+def debugger_matchers(runtime: Runtime) -> tuple[StaleDebuggerMatcher, ...]:
+    """Возвращает матчеры зависших отладчиков для runtime.
+
+    Точка расширения (open-closed): новый отладчик = новый matcher-класс
+    и запись в реестре, ядро очистки не меняется.
+    """
+    return _STALE_DEBUGGER_MATCHERS[runtime]
+
+
+def _has_listen_port(*, args: list[str], port: int) -> bool:
+    target = str(port)
+
+    for index, argument in enumerate(args):
+        value: str | None = None
+        if argument == "--listen" and index + 1 < len(args):
+            value = args[index + 1]
+        elif argument.startswith("--listen="):
+            value = argument[len("--listen=") :]
+
+        if value is not None and _port_value(value) == target:
+            return True
+
+    return False
+
+
+def _port_value(address: str) -> str:
+    """Возвращает порт из host:port, :port или port."""
+    return address.rsplit(":", maxsplit=1)[-1]
+
+
+def _is_debugpy_adapter_path(argument: str) -> bool:
+    parts = PurePosixPath(argument.replace("\\", "/")).parts
+    return parts[-2:] == ("debugpy", "adapter") or parts[-3:] == (
+        "debugpy",
+        "adapter",
+        "__main__.py",
+    )
+
+
+def _has_exact_option(*, args: list[str], option: str, value: str) -> bool:
+    return any(
+        (argument == option and index + 1 < len(args) and args[index + 1] == value)
+        or argument == f"{option}={value}"
+        for index, argument in enumerate(args)
+    )
+
+
+def cleanup_stale_debuggers(
+    *,
+    port: int,
+    matchers: Sequence[StaleDebuggerMatcher],
+    print_debug: Callable[[str], None],
+) -> None:
+    """Завершает зависшие процессы отладчика на порту через psutil.
+
+    Универсальна и не знает о конкретных отладчиках: решение о принадлежности
+    процесса отдаётся матчерам. Точка расширения — новые matcher-классы.
+    """
+    for process in psutil.process_iter():
+        _terminate_if_stale_debugger(
+            process=process,
+            port=port,
+            matchers=matchers,
+            print_debug=print_debug,
+        )
+
+
+def _terminate_if_stale_debugger(
+    *,
+    process: psutil.Process,
+    port: int,
+    matchers: Sequence[StaleDebuggerMatcher],
+    print_debug: Callable[[str], None],
+) -> None:
+    try:
+        cmdline = process.cmdline()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        return
+
+    if not any(matcher.matches(cmdline=cmdline, port=port) for matcher in matchers):
+        return
+
+    _terminate_debugger_process(process=process, port=port, print_debug=print_debug)
+
+
+def _terminate_debugger_process(
+    *,
+    process: psutil.Process,
+    port: int,
+    print_debug: Callable[[str], None],
+) -> None:
+    try:
+        pid = process.pid
+    except psutil.NoSuchProcess:
+        return
+
+    print_debug(f"Порт {port} занят зависшим процессом отладчика (PID {pid}); завершаю")
+
+    try:
+        process.terminate()
+    except psutil.NoSuchProcess:
+        return
+    except psutil.AccessDenied:
+        print_debug(
+            f"Порт {port}: нет прав на завершение PID {pid}; освободите порт вручную"
+        )
+        return
+
+    if _wait_process(process=process):
+        return
+
+    try:
+        process.kill()
+    except psutil.NoSuchProcess:
+        return
+    except psutil.AccessDenied:
+        print_debug(
+            f"Порт {port}: нет прав на завершение PID {pid}; освободите порт вручную"
+        )
+        return
+
+    if not _wait_process(process=process):
+        print_debug(
+            f"Порт {port}: процесс PID {pid} не завершился после SIGKILL; "
+            "освободите порт вручную"
+        )
+
+
+def _wait_process(*, process: psutil.Process) -> bool:
+    """Возвращает True, если процесс завершился, и False — если жив после ожидания."""
+    try:
+        process.wait(timeout=_STALE_DEBUG_PROCESS_TERMINATION_TIMEOUT_SECONDS)
+    except psutil.TimeoutExpired:
+        return False
+    except psutil.NoSuchProcess:
+        return True
+    else:
+        return True
+
+
+def _dlv_output_path(port: int) -> Path:
+    return Path(tempfile.gettempdir()) / f"runpoint-dlv-{port}"
+
+
+def cleanup_stale_debug_binary(*, port: int) -> None:
+    """Удаляет оставшийся dlv-бинарник из прошлой отладочной сессии."""
+    _dlv_output_path(port).unlink(missing_ok=True)
+
+
+def run_python_debug(  # noqa: PLR0913
+    *,
+    command: list[str],
+    working_dir: Path,
+    environment: dict[str, str],
+    port: int,
+    matchers: Sequence[StaleDebuggerMatcher],
+    print_debug: Callable[[str], None],
+) -> int:
+    """Запускает Python-отладку дочерним процессом с pre/finally очисткой адаптера.
+
+    Child остаётся в одной foreground process group с Runpoint, поэтому
+    терминальный Ctrl-C доходит до target; Runpoint ждёт завершения child и
+    возвращает 130 по SIGINT.
+    """
+    cleanup_stale_debuggers(port=port, matchers=matchers, print_debug=print_debug)
+    process = subprocess.Popen(  # noqa: S603 -- command is built explicitly, no shell
+        command,
+        cwd=str(working_dir),
+        env=environment,
+    )
+    try:
+        process.wait()
+    except KeyboardInterrupt:
+        _terminate_child_process(process)
+    finally:
+        cleanup_stale_debuggers(port=port, matchers=matchers, print_debug=print_debug)
+
+    return _resolve_exit_code(process.returncode)
+
+
+def run_go_debug(  # noqa: PLR0913
+    *,
+    command: list[str],
+    working_dir: Path,
+    environment: dict[str, str],
+    port: int,
+    matchers: Sequence[StaleDebuggerMatcher],
+    print_debug: Callable[[str], None],
+) -> int:
+    """Запускает Go-отладку дочерним процессом с pre/finally очисткой.
+
+    Child остаётся в одной foreground process group с Runpoint, поэтому
+    терминальный Ctrl-C доходит до dlv; Runpoint ждёт завершения child и
+    возвращает 130 по SIGINT. После завершения удаляет dlv-бинарник.
+    """
+    cleanup_stale_debuggers(port=port, matchers=matchers, print_debug=print_debug)
+    cleanup_stale_debug_binary(port=port)
+    print_debug(f"dlv: 127.0.0.1:{port}")
+    process = subprocess.Popen(  # noqa: S603 -- command is built explicitly, no shell
+        command,
+        cwd=str(working_dir),
+        env=environment,
+    )
+    try:
+        process.wait()
+    except KeyboardInterrupt:
+        _terminate_child_process(process)
+    finally:
+        cleanup_stale_debuggers(port=port, matchers=matchers, print_debug=print_debug)
+        cleanup_stale_debug_binary(port=port)
+
+    return _resolve_exit_code(process.returncode)
+
+
+def _terminate_child_process(process: subprocess.Popen[bytes]) -> None:
+    """Bounded shutdown после Ctrl-C: SIGTERM→SIGKILL; повторный Ctrl-C→SIGKILL."""
+    try:
+        if _wait_child_exit(process):
+            return
+        try:
+            process.terminate()
+        except (ProcessLookupError, PermissionError):
+            return
+        if _wait_child_exit(process):
+            return
+    except KeyboardInterrupt:
+        pass
+    try:
+        process.kill()
+    except (ProcessLookupError, PermissionError):
+        return
+    with suppress(KeyboardInterrupt):
+        _wait_child_exit(process)
+
+
+def _wait_child_exit(
+    process: subprocess.Popen[bytes],
+    *,
+    timeout: float = _CHILD_GRACE_SECONDS,
+) -> bool:
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
+
+
+def _resolve_exit_code(returncode: int | None) -> int:
+    if returncode is None:
+        return 1
+    if returncode < 0:
+        return 128 + (-returncode)
+    return returncode
 
 
 def resolve_working_directory(*, config_dir: Path, entrypoint: Entrypoint) -> Path:
@@ -103,9 +411,13 @@ def load_env_variables(
 ) -> dict[str, str]:
     """Формирует окружение запускаемой команды."""
     envs: dict[str, str] = {}
+    dotenv_path = _selected_dotenv_path(
+        entrypoint=entrypoint,
+        no_env=no_env,
+        config_dir=config_dir,
+    )
 
-    if not no_env and not entrypoint.is_test() and entrypoint.load_env_file:
-        dotenv_path = (config_dir / entrypoint.env_file).resolve()
+    if dotenv_path is not None:
         envs.update(data.dotenv_values(dotenv_path))
 
     envs.update(os.environ)
@@ -121,29 +433,40 @@ def env_loading_notice(
     no_env: bool,
     config_dir: Path,
 ) -> str | None:
-    """Возвращает уведомление о загрузке окружения, если оно требуется."""
+    """Описывает единственный фактический результат выбора .env."""
     if no_env:
-        return "Загрузка энвов пропущена из-за флага --no-env"
-
+        return "Загрузка .env пропущена: указан флаг --no-env"
     if entrypoint.is_test():
-        return "Загрузка энвов пропущена: обнаружен запуск тестов"
+        return "Загрузка .env пропущена: обнаружен запуск тестов"
 
-    if entrypoint.load_env_file:
-        dotenv_path = (config_dir / entrypoint.env_file).resolve()
-        return f"Переменные окружения загружены из {dotenv_path}"
-
+    dotenv_path = _selected_dotenv_path(
+        entrypoint=entrypoint,
+        no_env=no_env,
+        config_dir=config_dir,
+    )
+    if dotenv_path is not None:
+        return f"Переменные окружения загружены из .env-файла {dotenv_path}"
     return None
 
 
-def build_command(  # noqa: PLR0913
+def _selected_dotenv_path(
+    *,
+    entrypoint: Entrypoint,
+    no_env: bool,
+    config_dir: Path,
+) -> Path | None:
+    if no_env or entrypoint.is_test() or not entrypoint.load_env_file:
+        return None
+    return (config_dir / entrypoint.env_file).resolve()
+
+
+def build_command(
     *,
     working_dir: Path,
     entrypoint: Entrypoint,
     target_args: Sequence[str],
     debug: bool,
-    debug_port: int | None,
-    no_debug_wait: bool,
-    debug_subprocesses: bool,
+    debug_port: int,
 ) -> list[str]:
     """Implement general command build logic."""
     if entrypoint.runtime is Runtime.GO:
@@ -154,15 +477,11 @@ def build_command(  # noqa: PLR0913
 
             delve_executable = resolve_delve_executable()
 
-            if debug_port is None:
-                debug_port = DEFAULT_GO_DEBUG_PORT
-
             command = build_go_debug_command(
                 delve_executable=delve_executable,
                 entrypoint=entrypoint,
                 target_args=target_args,
                 port=debug_port,
-                continue_immediately=no_debug_wait,
             )
         else:
             go_executable = resolve_go_executable()
@@ -179,30 +498,23 @@ def build_command(  # noqa: PLR0913
 
         validate_target(working_dir=working_dir, entrypoint=entrypoint)
 
-        if debug_port is None:
-            debug_port = DEFAULT_PYTHON_DEBUG_PORT
-
         command = build_python_command(
             debug=debug,
             port=debug_port,
             entrypoint=entrypoint,
             python_executable=python_executable,
             target_args=target_args,
-            wait_for_client=not no_debug_wait,
-            debug_subprocesses=debug_subprocesses,
         )
 
     return command
 
 
-def build_python_command(  # noqa: PLR0913 -- arguments map directly to CLI options
+def build_python_command(
     *,
     port: int,
     debug: bool,
     python_executable: Path,
-    wait_for_client: bool,
     entrypoint: Entrypoint,
-    debug_subprocesses: bool,
     target_args: Sequence[str],
 ) -> list[str]:
     """Формирует команду обычного или отладочного запуска."""
@@ -211,25 +523,18 @@ def build_python_command(  # noqa: PLR0913 -- arguments map directly to CLI opti
     if not debug:
         return [str(python_executable), *target]
 
-    command = [
+    return [
         str(python_executable),
         "-Xfrozen_modules=off",
         "-m",
         "debugpy",
         "--listen",
         f"127.0.0.1:{port}",
+        "--wait-for-client",
+        "--configure-subProcess",
+        "True",
+        *target,
     ]
-
-    if wait_for_client:
-        command.append("--wait-for-client")
-
-    if debug_subprocesses:
-        command.extend(("--configure-subProcess", "True"))
-    else:
-        command.extend(("--configure-subProcess", "False"))
-
-    command.extend(target)
-    return command
 
 
 def build_go_command(
@@ -248,9 +553,8 @@ def build_go_debug_command(
     entrypoint: Entrypoint,
     target_args: Sequence[str],
     port: int,
-    continue_immediately: bool,
 ) -> list[str]:
-    """Формирует команду отладки Go target через Delve."""
+    """Формирует команду отладки Go target через single-client Delve."""
     configured_args = entrypoint.command_args()
     operation = configured_args[0]
 
@@ -260,13 +564,6 @@ def build_go_debug_command(
         delve_command = "test"
     else:
         message = "Go debug поддерживает только команды 'run' и 'test'"
-        raise SystemExit(message)
-
-    if operation == "test" and continue_immediately:
-        message = (
-            "--no-debug-wait не поддерживается для Go-команды 'test': "
-            "dlv test не принимает --continue"
-        )
         raise SystemExit(message)
 
     target_count = len(configured_args) - 1
@@ -295,11 +592,9 @@ def build_go_debug_command(
         "--headless",
         f"--listen=127.0.0.1:{port}",
         "--api-version=2",
-        "--accept-multiclient",
+        "--output",
+        str(_dlv_output_path(port)),
     ]
-
-    if continue_immediately:
-        command.append("--continue")
 
     command.extend(configured_args[1:])
 
@@ -315,7 +610,7 @@ def replace_process(
     working_dir: Path,
     command: list[str],
     environment: dict[str, str],
-) -> NoReturn:
+) -> None:
     """Заменяет текущий процесс настроенной командой."""
     # execvpe does not flush Python buffers. No subprocess is created: on POSIX
     # the current process image is replaced while PID/process group/stdio stay.

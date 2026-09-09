@@ -12,6 +12,7 @@ requires-python = ">=3.10.0"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
+    "Operating System :: POSIX",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -22,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "debugpy",
+    "psutil>=7.2.2",
     "python-dotenv",
     "rich",
     "typer",
@@ -68,6 +70,7 @@ ignore = [
     "COM812", # Conflicts with the formatter.
     "D203",   # Conflicts with D211.
     "D213",   # Conflicts with D212.
+    "D100",
 ]
 
 [tool.ruff.lint.per-file-ignores]

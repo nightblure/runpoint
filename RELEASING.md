@@ -24,9 +24,9 @@ make test
 После merge обновить локальную ветку и создать тег из версии проекта:
 
 ```shell
-git switch main
-git pull --ff-only origin main
-source .venv/bin/activate
+git switch main && git pull
+make bump_patch/make bump_minor
+git add. && git commit && git push
 VERSION="$(uv version --short)"
 git tag -a "v${VERSION}" -m "runpoint v${VERSION}"
 git push origin "v${VERSION}"
@@ -38,7 +38,7 @@ git tag -d <tag>
 git push --delete origin <tag>
 ```
 
-Тег должен совпадать с `project.version`. Push тега `v*` запускает проверки, сборку wheel/sdist и создание GitHub Release.
+Тег должен совпадать с `project.version`. Push тега `v*` запускает проверки, сборку wheel/sdist и создание GitHub Release. В примечания к релизу автоматически добавляется команда установки текущего wheel.
 
 ## 3. Проверить релиз
 
