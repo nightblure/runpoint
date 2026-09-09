@@ -117,6 +117,41 @@ runpoint go-tests -- -run TestAPI
 runpoint go-build
 ```
 
+---
+
+## Debug usage
+
+### Zed
+
+Создать в нужном репозитории файл `.zed/debug.json` со следующим содержимым: 
+```jsonc
+[
+// https://zed.dev/docs/languages/python#debugging
+  {
+    "label": "runpoint_client",
+    "type": "python",
+    "adapter": "Debugpy",
+    "request": "attach",
+    "connect": { "port": 5678 },
+    "justMyCode": false,
+    "subProcess": true,
+  }
+]
+```
+
+### PyCharm
+
+В конфигурациях запуска справа в верхнем углу добавить тип конфига 
+**Attach to DAP** указать и адрес `127.0.0.1:5678` (либо другой нужный порт)
+
+### Goland
+
+В конфигурациях запуска справа в верхнем углу добавить тип конфига 
+**Go Remote** указать и порт `2345` (либо другой нужный порт).
+В опциях конфига выбрать `On disconnect: Stop remove Delve process`
+
+---
+
 Normal Go launches require `go` in `PATH`. Debug launches require `dlv` in
 `PATH` and support configured `run` and `test` commands:
 
@@ -138,3 +173,14 @@ Recursive or multi-package patterns such as `./...`, `all`, `std`, `cmd`, and
 that behavior for `test`, so runpoint rejects that combination. Go `build`
 cannot be debug-launched. `--debug-subprocesses` is Python-specific and is
 rejected when explicitly supplied for a Go entry point.
+
+### Stale debug port cleanup
+
+For Python debug launches runpoint checks the debug port before starting
+debugpy. The debugpy adapter daemonizes (it leaves the process group via
+`setsid`), so it can survive an abnormal end of a debug session and keep
+holding the port, making the next run fail with `Address already in use`.
+Runpoint automatically terminates stale debugpy processes (adapter or server)
+found listening on the debug port. If the port is held by any other process,
+runpoint fails with its PID and command line — terminate it manually or pass
+a different port via `--debug-port`.

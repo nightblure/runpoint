@@ -4,20 +4,30 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
+import subprocess
 import sys
+import time
+from contextlib import suppress
+from itertools import pairwise
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING
 
 from runpoint import data
 from runpoint.domain import Runtime
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from runpoint.domain import Entrypoint
 
 DEFAULT_PYTHON_DEBUG_PORT = 5678
 DEFAULT_GO_DEBUG_PORT = 2345
+
+_STALE_DEBUG_PROCESS_TERMINATION_TIMEOUT_SECONDS = 2.0
+_DEBUG_PORT_RELEASE_TIMEOUT_SECONDS = 2.0
+_DEBUG_PORT_POLL_INTERVAL_SECONDS = 0.05
+_EXTERNAL_COMMAND_TIMEOUT_SECONDS = 10.0
 
 
 def resolve_working_directory(*, config_dir: Path, entrypoint: Entrypoint) -> Path:
@@ -115,24 +125,149 @@ def load_env_variables(
     return envs
 
 
-def env_loading_notice(
-    entrypoint: Entrypoint,
+def ensure_debug_port_is_free(
     *,
-    no_env: bool,
-    config_dir: Path,
-) -> str | None:
-    """Возвращает уведомление о загрузке окружения, если оно требуется."""
-    if no_env:
-        return "Загрузка энвов пропущена из-за флага --no-env"
+    port: int,
+    print_debug: Callable[[str], None],
+) -> None:
+    """Освобождает отладочный порт от зависших процессов debugpy.
 
-    if entrypoint.is_test():
-        return "Загрузка энвов пропущена: обнаружен запуск тестов"
+    Адаптер debugpy демонизируется (setsid + двойной форк), поэтому переживает
+    аварийное завершение отладочной сессии и продолжает держать порт. Такие
+    процессы завершаются перед новым запуском. Посторонние процессы не трогаются.
+    """
+    lsof_executable = shutil.which("lsof")
 
-    if entrypoint.load_env_file:
-        dotenv_path = (config_dir / entrypoint.env_file).resolve()
-        return f"Переменные окружения загружены из {dotenv_path}"
+    if lsof_executable is None:
+        return
 
-    return None
+    listeners = _find_port_listeners(lsof_executable, port)
+
+    if not listeners:
+        return
+
+    stale = {
+        pid: command
+        for pid, command in listeners.items()
+        if _is_debugpy_process(command)
+    }
+    foreign = {pid: command for pid, command in listeners.items() if pid not in stale}
+
+    if foreign:
+        details = "; ".join(f"PID {pid}: {cmd}" for pid, cmd in sorted(foreign.items()))
+        message = (
+            f"Порт {port} занят другим процессом: {details}. Завершите процесс "
+            f"вручную или укажите другой порт: --debug-port <PORT>"
+        )
+        raise SystemExit(message)
+
+    for pid in sorted(stale):
+        print_debug(
+            f"Порт {port} занят зависшим debugpy (PID {pid}: {stale[pid]}); "
+            "завершаю процесс"
+        )
+        try:
+            _terminate_process(pid)
+        except PermissionError as error:
+            message = (
+                f"Нет прав на завершение зависшего debugpy (PID {pid}); "
+                "завершите процесс вручную"
+            )
+            raise SystemExit(message) from error
+
+    if _find_port_listeners(lsof_executable, port):
+        message = (
+            f"Не удалось освободить порт {port} от зависшего debugpy; "
+            "завершите процессы вручную"
+        )
+        raise SystemExit(message)
+
+
+def _find_port_listeners(lsof_executable: str, port: int) -> dict[int, str]:
+    """Возвращает PID и командную строку процессов, слушающих TCP-порт."""
+    lsof_output = _run_command_output(
+        [lsof_executable, "-nP", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+    )
+
+    if lsof_output is None:
+        return {}
+
+    pids = sorted({int(token) for token in lsof_output.split() if token.isdigit()})
+
+    if not pids:
+        return {}
+
+    ps_output = _run_command_output(
+        ["ps", "-p", ",".join(str(pid) for pid in pids), "-o", "pid=,command="],
+    )
+
+    if ps_output is None:
+        return {}
+
+    commands: dict[int, str] = {}
+
+    for line in ps_output.splitlines():
+        pid_token, separator, command = line.strip().partition(" ")
+
+        if separator and pid_token.isdigit():
+            commands[int(pid_token)] = command.strip()
+
+    return {pid: commands[pid] for pid in pids if pid in commands}
+
+
+def _run_command_output(args: Sequence[str]) -> str | None:
+    """Запускает команду без shell и возвращает stdout либо None при сбое."""
+    try:
+        result = subprocess.run(  # noqa: S603 -- arguments are constant, no shell
+            args,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_EXTERNAL_COMMAND_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    return result.stdout
+
+
+def _is_debugpy_process(command: str) -> bool:
+    """Определяет, принадлежит ли процесс debugpy (адаптер или сервер)."""
+    args = command.split()
+
+    if any("debugpy/adapter" in arg or "debugpy\\adapter" in arg for arg in args):
+        return True
+
+    return any(
+        previous == "-m" and argument == "debugpy"
+        for previous, argument in pairwise(args)
+    )
+
+
+def _terminate_process(pid: int) -> None:
+    """Завершает процесс: SIGTERM с ожиданием, затем SIGKILL."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if not _is_process_alive(pid):
+            return
+
+        with suppress(ProcessLookupError):
+            os.kill(pid, sig)
+
+        deadline = time.monotonic() + _STALE_DEBUG_PROCESS_TERMINATION_TIMEOUT_SECONDS
+
+        while _is_process_alive(pid) and time.monotonic() < deadline:
+            time.sleep(_DEBUG_PORT_POLL_INTERVAL_SECONDS)
+
+
+def _is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+    return True
 
 
 def build_command(  # noqa: PLR0913
@@ -141,7 +276,7 @@ def build_command(  # noqa: PLR0913
     entrypoint: Entrypoint,
     target_args: Sequence[str],
     debug: bool,
-    debug_port: int | None,
+    debug_port: int,
     no_debug_wait: bool,
     debug_subprocesses: bool,
 ) -> list[str]:
@@ -153,9 +288,6 @@ def build_command(  # noqa: PLR0913
                 raise SystemExit(message)
 
             delve_executable = resolve_delve_executable()
-
-            if debug_port is None:
-                debug_port = DEFAULT_GO_DEBUG_PORT
 
             command = build_go_debug_command(
                 delve_executable=delve_executable,
@@ -315,7 +447,7 @@ def replace_process(
     working_dir: Path,
     command: list[str],
     environment: dict[str, str],
-) -> NoReturn:
+) -> None:
     """Заменяет текущий процесс настроенной командой."""
     # execvpe does not flush Python buffers. No subprocess is created: on POSIX
     # the current process image is replaced while PID/process group/stdio stay.

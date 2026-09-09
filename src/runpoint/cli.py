@@ -153,16 +153,16 @@ def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
         ctx.fail("--debug-subprocesses не поддерживается для Go")
 
     use_cases.launch_entrypoint(
-        config_dir=launcher_ctx.config_dir,
-        entrypoint=entrypoint,
-        target_args=target_args,
         debug=debug,
-        debug_port=debug_port,
-        no_debug_wait=no_debug_wait,
-        debug_subprocesses=debug_subprocesses,
         no_env=no_env,
-        print_message=_print_message,
+        entrypoint=entrypoint,
+        debug_port=debug_port,
+        target_args=target_args,
         print_debug=_print_debug,
+        print_message=_print_message,
+        no_debug_wait=no_debug_wait,
+        config_dir=launcher_ctx.config_dir,
+        debug_subprocesses=debug_subprocesses,
     )
 
 
@@ -192,6 +192,7 @@ def main() -> None:
         entrypoints=entrypoints,
         target_args=tuple(target_args),
     )
+
     app(launcher_args, obj=launcher_context)
 
 
