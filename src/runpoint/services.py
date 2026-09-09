@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -24,6 +25,7 @@ DEFAULT_PYTHON_DEBUG_PORT = 5678
 DEFAULT_GO_DEBUG_PORT = 2345
 
 _STALE_DEBUG_PROCESS_TERMINATION_TIMEOUT_SECONDS = 2.0
+_CHILD_GRACE_SECONDS = 5.0
 
 
 @runtime_checkable
@@ -172,6 +174,11 @@ def _terminate_debugger_process(
         process.terminate()
     except psutil.NoSuchProcess:
         return
+    except psutil.AccessDenied:
+        print_debug(
+            f"Порт {port}: нет прав на завершение PID {pid}; освободите порт вручную"
+        )
+        return
 
     if _wait_process(process=process):
         return
@@ -179,6 +186,11 @@ def _terminate_debugger_process(
     try:
         process.kill()
     except psutil.NoSuchProcess:
+        return
+    except psutil.AccessDenied:
+        print_debug(
+            f"Порт {port}: нет прав на завершение PID {pid}; освободите порт вручную"
+        )
         return
 
     if not _wait_process(process=process):
@@ -224,11 +236,44 @@ def run_python_debug(  # noqa: PLR0913
     try:
         process.wait()
     except KeyboardInterrupt:
-        process.wait()
+        _terminate_child_process(process)
     finally:
         cleanup_stale_debuggers(port=port, matchers=matchers, print_debug=print_debug)
 
     return _resolve_exit_code(process.returncode)
+
+
+def _terminate_child_process(process: subprocess.Popen[bytes]) -> None:
+    """Bounded shutdown после Ctrl-C: SIGTERM→SIGKILL; повторный Ctrl-C→SIGKILL."""
+    try:
+        if _wait_child_exit(process):
+            return
+        try:
+            process.terminate()
+        except (ProcessLookupError, PermissionError):
+            return
+        if _wait_child_exit(process):
+            return
+    except KeyboardInterrupt:
+        pass
+    try:
+        process.kill()
+    except (ProcessLookupError, PermissionError):
+        return
+    with suppress(KeyboardInterrupt):
+        _wait_child_exit(process)
+
+
+def _wait_child_exit(
+    process: subprocess.Popen[bytes],
+    *,
+    timeout: float = _CHILD_GRACE_SECONDS,
+) -> bool:
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False
+    return True
 
 
 def _resolve_exit_code(returncode: int | None) -> int:

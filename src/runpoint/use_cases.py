@@ -113,4 +113,4 @@ def _resolve_debug_port(runtime: Runtime, debug_port: int | None) -> int:
         return services.DEFAULT_PYTHON_DEBUG_PORT
 
     msg = "Порт отладки не определён"
-    raise SystemExit(msg)
+    raise NotImplementedError(msg)

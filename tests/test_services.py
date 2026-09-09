@@ -1,5 +1,6 @@
 """Проверяет runtime-сервисы запуска."""
 
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -296,7 +297,7 @@ _ADAPTER_CMDLINE = [
     "4242",
     "--port",
     "5678",
-    "--adapter-access-token",
+    "--access-token",
     "abc",
 ]
 
@@ -446,6 +447,7 @@ class _FakeProcess:
         *,
         cmdline_raises: BaseException | None = None,
         terminate_raises: BaseException | None = None,
+        kill_raises: BaseException | None = None,
         wait_after_term: BaseException | None = None,
         wait_after_kill: BaseException | None = None,
         events: list[str] | None = None,
@@ -454,6 +456,7 @@ class _FakeProcess:
         self._cmdline = list(cmdline)
         self._cmdline_raises = cmdline_raises
         self._terminate_raises = terminate_raises
+        self._kill_raises = kill_raises
         self._wait_after_term = wait_after_term
         self._wait_after_kill = wait_after_kill
         self._events = events
@@ -477,6 +480,8 @@ class _FakeProcess:
     def kill(self) -> None:
         self.killed = True
         self._last = "kill"
+        if self._kill_raises is not None:
+            raise self._kill_raises
 
     def wait(self, *, timeout: float | None = None) -> None:  # noqa: ARG002
         if self._last == "term" and self._wait_after_term is not None:
@@ -691,6 +696,100 @@ def test_cleanup_terminates_stale_delve_with_delve_matcher(
     assert proc.terminated
 
 
+def test_cleanup_logs_when_terminate_raises_access_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Логирует и продолжает, если нет прав на SIGTERM."""
+    proc = _FakeProcess(
+        101,
+        _adapter_cmdline(5678),
+        terminate_raises=psutil.AccessDenied(101),
+    )
+    messages: list[str] = []
+    _patch_processes(monkeypatch, [proc])
+
+    cleanup_stale_debuggers(
+        port=5678,
+        matchers=(DebugpyAdapterMatcher(),),
+        print_debug=messages.append,
+    )
+
+    assert not proc.killed
+    assert any("PID 101" in m and "освободите" in m for m in messages)
+
+
+def test_cleanup_skips_zombie_process_on_terminate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Зомби-процесс уже мёртв — пропускает без попытки kill."""
+    proc = _FakeProcess(
+        101,
+        _adapter_cmdline(5678),
+        terminate_raises=psutil.ZombieProcess(101),
+    )
+    _patch_processes(monkeypatch, [proc])
+
+    cleanup_stale_debuggers(
+        port=5678,
+        matchers=(DebugpyAdapterMatcher(),),
+        print_debug=lambda _message: None,
+    )
+
+    assert not proc.killed
+
+
+def test_cleanup_logs_when_kill_raises_access_denied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Логирует, если SIGKILL недоступен из-за прав."""
+    proc = _FakeProcess(
+        101,
+        _adapter_cmdline(5678),
+        wait_after_term=psutil.TimeoutExpired(2),
+        kill_raises=psutil.AccessDenied(101),
+    )
+    messages: list[str] = []
+    _patch_processes(monkeypatch, [proc])
+
+    cleanup_stale_debuggers(
+        port=5678,
+        matchers=(DebugpyAdapterMatcher(),),
+        print_debug=messages.append,
+    )
+
+    assert proc.terminated
+    assert proc.killed
+    assert any("PID 101" in m and "освободите" in m for m in messages)
+
+
+def test_run_python_debug_proceeds_after_failed_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Запуск продолжается, даже если SIGKILL не завершил зависший adapter."""
+    psutil_fake = _FakeProcess(
+        101,
+        _adapter_cmdline(5678),
+        wait_after_term=psutil.TimeoutExpired(2),
+        wait_after_kill=psutil.TimeoutExpired(2),
+    )
+    popen_fake = _FakePopen(returncode=0)
+    _patch_processes(monkeypatch, [psutil_fake])
+    _patch_popen(monkeypatch, popen_fake, [], [])
+
+    code = run_python_debug(
+        command=["python", "-m", "app"],
+        working_dir=Path("/project"),
+        environment={},
+        port=5678,
+        matchers=(DebugpyAdapterMatcher(),),
+        print_debug=lambda _message: None,
+    )
+
+    assert code == 0
+    assert psutil_fake.terminated
+    assert psutil_fake.killed
+
+
 # --- Python debug lifecycle -------------------------------------------------
 
 _SIGINT_EXIT_CODE = 130
@@ -713,8 +812,10 @@ class _FakePopen:
         )
         self._waits = 0
         self._events = events
+        self.terminated = False
+        self.killed = False
 
-    def wait(self) -> int | None:
+    def wait(self, timeout: float | None = None) -> int | None:  # noqa: ARG002
         if self._events is not None:
             self._events.append("wait")
 
@@ -725,6 +826,16 @@ class _FakePopen:
             if outcome is not None:
                 raise outcome
         return self.returncode
+
+    def terminate(self) -> None:
+        if self._events is not None:
+            self._events.append("terminate")
+        self.terminated = True
+
+    def kill(self) -> None:
+        if self._events is not None:
+            self._events.append("kill")
+        self.killed = True
 
 
 def _patch_popen(
@@ -850,3 +961,86 @@ def test_run_python_debug_translates_signal_death_to_shell_code(
 
     assert code == _SIGTERM_EXIT_CODE
     assert events == ["cleanup", "launch", "wait", "cleanup"]
+
+
+def test_run_python_debug_escalates_to_sigterm_when_child_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C + child не умирает по SIGINT → SIGTERM → bounded wait → SIGKILL."""
+    events: list[str] = []
+    psutil_fake = _FakeProcess(101, _adapter_cmdline(5678), events=events)
+    popen_fake = _FakePopen(
+        returncode=-9,
+        wait_sequence=[
+            KeyboardInterrupt(),
+            subprocess.TimeoutExpired("test", 5),
+            subprocess.TimeoutExpired("test", 5),
+        ],
+        events=events,
+    )
+    _patch_processes(monkeypatch, [psutil_fake])
+    _patch_popen(monkeypatch, popen_fake, events, [])
+
+    code = run_python_debug(
+        command=["python", "-m", "app"],
+        working_dir=Path("/project"),
+        environment={},
+        port=5678,
+        matchers=(DebugpyAdapterMatcher(),),
+        print_debug=lambda _message: None,
+    )
+
+    assert code == 128 + 9
+    assert popen_fake.terminated
+    assert popen_fake.killed
+    assert events == [
+        "cleanup",
+        "launch",
+        "wait",
+        "wait",
+        "terminate",
+        "wait",
+        "kill",
+        "wait",
+        "cleanup",
+    ]
+
+
+def test_run_python_debug_sigkill_on_double_ctrl_c(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Повторный Ctrl-C → немедленный SIGKILL, минуя SIGTERM."""
+    events: list[str] = []
+    psutil_fake = _FakeProcess(101, _adapter_cmdline(5678), events=events)
+    popen_fake = _FakePopen(
+        returncode=-9,
+        wait_sequence=[
+            KeyboardInterrupt(),
+            KeyboardInterrupt(),
+        ],
+        events=events,
+    )
+    _patch_processes(monkeypatch, [psutil_fake])
+    _patch_popen(monkeypatch, popen_fake, events, [])
+
+    code = run_python_debug(
+        command=["python", "-m", "app"],
+        working_dir=Path("/project"),
+        environment={},
+        port=5678,
+        matchers=(DebugpyAdapterMatcher(),),
+        print_debug=lambda _message: None,
+    )
+
+    assert code == 128 + 9
+    assert popen_fake.killed
+    assert not popen_fake.terminated
+    assert events == [
+        "cleanup",
+        "launch",
+        "wait",
+        "wait",
+        "kill",
+        "wait",
+        "cleanup",
+    ]
