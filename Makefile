@@ -34,3 +34,9 @@ test_py:
 
 build:
 	$(UV) run hatch build
+
+bump_patch:
+	uv version --bump patch
+
+bump_minor:
+	uv version --bump minor

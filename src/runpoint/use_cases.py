@@ -15,47 +15,39 @@ if TYPE_CHECKING:
     from runpoint.domain import Entrypoint
 
 
-def launch_entrypoint(  # noqa: PLR0913, C901
+def launch_entrypoint(  # noqa: PLR0913
     *,
     debug: bool,
     no_env: bool,
     config_dir: Path,
-    no_debug_wait: bool,
     debug_port: int | None,
     entrypoint: Entrypoint,
-    debug_subprocesses: bool,
     target_args: Sequence[str],
     print_message: Callable[[str], None],
     print_debug: Callable[[str], None],
-) -> None:
-    """Подготавливает запуск и заменяет текущий процесс точкой входа."""
+) -> int | None:
+    """Подготавливает и запускает точку входа.
+
+    Обычный запуск и Go-отладка заменяют текущий процесс (execvpe) и не
+    возвращают управление. Python-отладка запускается дочерним процессом и
+    возвращает exit code (130 по SIGINT).
+    """
     working_dir = services.resolve_working_directory(
         config_dir=config_dir,
         entrypoint=entrypoint,
     )
 
-    if debug_port is None:
-        if entrypoint.runtime is Runtime.GO:
-            debug_port = services.DEFAULT_GO_DEBUG_PORT
-        elif entrypoint.runtime is Runtime.PYTHON:
-            debug_port = services.DEFAULT_PYTHON_DEBUG_PORT
-
-    if debug_port is None:
-        msg = "debug port is None"
-        raise SystemExit(msg)
+    debug_port = _resolve_debug_port(entrypoint.runtime, debug_port)
 
     command = services.build_command(
         entrypoint=entrypoint,
         debug=debug,
         debug_port=debug_port,
         working_dir=working_dir,
-        debug_subprocesses=debug_subprocesses,
-        no_debug_wait=no_debug_wait,
         target_args=target_args,
     )
 
     print_message(f"working_dir: {working_dir}")
-
     print_message(f"cmd: {shlex.join(command)}")
 
     env_variables = services.load_env_variables(
@@ -64,38 +56,61 @@ def launch_entrypoint(  # noqa: PLR0913, C901
         config_dir=config_dir,
     )
 
-    if no_env:
-        print_message("Загрузка энвов пропущена из-за флага --no-env")
-
-    if entrypoint.is_test():
-        print_message("Загрузка энвов пропущена: обнаружен запуск тестов")
-
-    if entrypoint.load_env_file:
-        dotenv_path = (config_dir / entrypoint.env_file).resolve()
-        print_message(f"Переменные окружения загружены из {dotenv_path}")
+    env_notice = services.env_loading_notice(
+        entrypoint,
+        no_env=no_env,
+        config_dir=config_dir,
+    )
+    if env_notice is not None:
+        print_message(env_notice)
 
     if entrypoint.runtime is Runtime.PYTHON:
         env_variables.setdefault("PYDEVD_DISABLE_FILE_VALIDATION", "1")
 
-    if debug:
-        services.ensure_debug_port_is_free(
+    if not debug:
+        services.replace_process(
+            working_dir=working_dir,
+            command=command,
+            environment=env_variables,
+        )
+        return None  # unreachable: execvpe replaces the process
+
+    matchers = services.debugger_matchers(entrypoint.runtime)
+
+    if entrypoint.runtime is Runtime.GO:
+        services.cleanup_stale_debuggers(
             port=debug_port,
+            matchers=matchers,
             print_debug=print_debug,
         )
-
-    if debug and entrypoint.runtime is Runtime.GO:
-        wait_status = (
-            "Ожидание подключения IDE" if not no_debug_wait else "без ожидания IDE"
+        print_debug(f"dlv: 127.0.0.1:{debug_port}")
+        services.replace_process(
+            working_dir=working_dir,
+            command=command,
+            environment=env_variables,
         )
-        print_debug(f"dlv: 127.0.0.1:{debug_port} ({wait_status})")
-    elif debug:
-        wait_status = (
-            "Ожидание подключения IDE" if not no_debug_wait else "без ожидания IDE"
-        )
-        print_debug(f"debugpy: 127.0.0.1:{debug_port} ({wait_status})")
+        return None  # unreachable: execvpe replaces the process
 
-    services.replace_process(
-        working_dir=working_dir,
+    print_debug(f"debugpy: 127.0.0.1:{debug_port}")
+    return services.run_python_debug(
         command=command,
+        working_dir=working_dir,
         environment=env_variables,
+        port=debug_port,
+        matchers=matchers,
+        print_debug=print_debug,
     )
+
+
+def _resolve_debug_port(runtime: Runtime, debug_port: int | None) -> int:
+    if debug_port is not None:
+        return debug_port
+
+    if runtime is Runtime.GO:
+        return services.DEFAULT_GO_DEBUG_PORT
+
+    if runtime is Runtime.PYTHON:
+        return services.DEFAULT_PYTHON_DEBUG_PORT
+
+    msg = "Порт отладки не определён"
+    raise SystemExit(msg)
