@@ -18,6 +18,7 @@ from runpoint.services import (
     cleanup_stale_debuggers,
     load_env_variables,
     resolve_python_executable,
+    run_go_debug,
     run_python_debug,
     validate_target,
 )
@@ -1082,3 +1083,134 @@ def test_run_python_debug_sigkill_on_double_ctrl_c(
         "wait",
         "cleanup",
     ]
+
+
+# --- Go debug lifecycle -------------------------------------------------------
+
+
+_DLV_CMDLINE = [
+    "/opt/bin/dlv",
+    "debug",
+    "--headless",
+    "--listen=127.0.0.1:2345",
+    "--api-version=2",
+    "--output",
+    "/test-tmp/runpoint-dlv-2345",
+    "./cmd/app",
+]
+
+
+def _dlv_cmdline(port: int) -> list[str]:
+    return [
+        "/opt/bin/dlv",
+        "debug",
+        "--headless",
+        f"--listen=127.0.0.1:{port}",
+        "--api-version=2",
+        "--output",
+        f"/test-tmp/runpoint-dlv-{port}",
+        "./cmd/app",
+    ]
+
+
+def test_run_go_debug_cleans_binary_and_debugger_in_pre_and_finally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre: cleanup_stale_debuggers + cleanup_stale_debug_binary; finally: both."""
+    events: list[str] = []
+    psutil_fake = _FakeProcess(101, _dlv_cmdline(2345), events=events)
+    popen_fake = _FakePopen(returncode=0, events=events)
+    _patch_processes(monkeypatch, [psutil_fake])
+    binary_calls: list[int] = []
+    monkeypatch.setattr(
+        "runpoint.services.cleanup_stale_debug_binary",
+        lambda *, port: events.append("binary") or binary_calls.append(port),
+    )
+    _patch_popen(monkeypatch, popen_fake, events, [])
+
+    code = run_go_debug(
+        command=_dlv_cmdline(2345),
+        working_dir=Path("/project"),
+        environment={"X": "1"},
+        port=2345,
+        matchers=(DelveMatcher(),),
+        print_debug=lambda _message: None,
+    )
+
+    assert code == 0
+    assert events == [
+        "cleanup",
+        "binary",
+        "launch",
+        "wait",
+        "cleanup",
+        "binary",
+    ]
+    assert binary_calls == [2345, 2345]
+
+
+def test_run_go_debug_returns_130_on_sigint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl-C: ждёт завершения dlv и возвращает 130, finally чистит."""
+    events: list[str] = []
+    psutil_fake = _FakeProcess(101, _dlv_cmdline(2345), events=events)
+    popen_fake = _FakePopen(
+        returncode=-2,
+        wait_sequence=[KeyboardInterrupt()],
+        events=events,
+    )
+    _patch_processes(monkeypatch, [psutil_fake])
+    monkeypatch.setattr(
+        "runpoint.services.cleanup_stale_debug_binary",
+        lambda *, port: events.append("binary"),  # noqa: ARG005
+    )
+    _patch_popen(monkeypatch, popen_fake, events, [])
+
+    code = run_go_debug(
+        command=_dlv_cmdline(2345),
+        working_dir=Path("/project"),
+        environment={},
+        port=2345,
+        matchers=(DelveMatcher(),),
+        print_debug=lambda _message: None,
+    )
+
+    assert code == _SIGINT_EXIT_CODE
+    assert events == [
+        "cleanup",
+        "binary",
+        "launch",
+        "wait",
+        "wait",
+        "cleanup",
+        "binary",
+    ]
+
+
+def test_run_go_debug_prints_dlv_status_after_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Сообщает адрес dlv после pre-cleanup, до запуска процесса."""
+    events: list[str] = []
+    psutil_fake = _FakeProcess(101, _dlv_cmdline(2345), events=events)
+    popen_fake = _FakePopen(returncode=0, events=events)
+    _patch_processes(monkeypatch, [psutil_fake])
+    monkeypatch.setattr(
+        "runpoint.services.cleanup_stale_debug_binary",
+        lambda *, port: events.append("binary"),  # noqa: ARG005
+    )
+    _patch_popen(monkeypatch, popen_fake, events, [])
+    debug_messages: list[str] = []
+
+    run_go_debug(
+        command=_dlv_cmdline(2345),
+        working_dir=Path("/project"),
+        environment={},
+        port=2345,
+        matchers=(DelveMatcher(),),
+        print_debug=debug_messages.append,
+    )
+
+    assert "dlv: 127.0.0.1:2345" in debug_messages
+    assert events.index("binary") < events.index("launch")

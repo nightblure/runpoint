@@ -1,5 +1,3 @@
-"""Координирует запуск настроенной точки входа."""
-
 from __future__ import annotations
 
 import shlex
@@ -78,19 +76,14 @@ def launch_entrypoint(  # noqa: PLR0913
     matchers = services.debugger_matchers(entrypoint.runtime)
 
     if entrypoint.runtime is Runtime.GO:
-        services.cleanup_stale_debuggers(
+        return services.run_go_debug(
+            command=command,
+            working_dir=working_dir,
+            environment=env_variables,
             port=debug_port,
             matchers=matchers,
             print_debug=print_debug,
         )
-        services.cleanup_stale_debug_binary(port=debug_port)
-        print_debug(f"dlv: 127.0.0.1:{debug_port}")
-        services.replace_process(
-            working_dir=working_dir,
-            command=command,
-            environment=env_variables,
-        )
-        return None  # unreachable: execvpe replaces the process
 
     print_debug(f"debugpy: 127.0.0.1:{debug_port}")
     return services.run_python_debug(

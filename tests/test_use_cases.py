@@ -117,6 +117,38 @@ def _stub_run_python_debug(
     return calls
 
 
+def _stub_run_go_debug(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    return_code: int = 0,
+) -> list[_RunCall]:
+    calls: list[_RunCall] = []
+
+    def run(  # noqa: PLR0913
+        *,
+        command: Sequence[str],
+        working_dir: Path,
+        environment: dict[str, str],
+        port: int,
+        matchers: tuple[StaleDebuggerMatcher, ...],
+        print_debug: Callable[[str], None],
+    ) -> int:
+        calls.append(
+            {
+                "command": tuple(command),
+                "working_dir": working_dir,
+                "environment": environment,
+                "port": port,
+                "matchers": matchers,
+                "print_debug": print_debug,
+            }
+        )
+        return return_code
+
+    monkeypatch.setattr(services, "run_go_debug", run)
+    return calls
+
+
 def _make_python_dir(tmp_path: Path) -> Path:
     working_dir = tmp_path / "application"
     python_executable = working_dir / ".venv" / "bin" / "python"
@@ -302,8 +334,11 @@ def test_launch_entrypoint_resolves_relative_go_tool_before_changing_cwd(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shutil.which", lambda requested: f"tools/{requested}")
-    _stub_cleanup(monkeypatch)
-    replacements = _stub_replace(monkeypatch)
+    if debug:
+        run_calls = _stub_run_go_debug(monkeypatch)
+    else:
+        run_calls = None
+        _stub_replace(monkeypatch)
 
     launch_entrypoint(
         config_dir=tmp_path,
@@ -316,9 +351,12 @@ def test_launch_entrypoint_resolves_relative_go_tool_before_changing_cwd(
         print_debug=lambda _message: None,
     )
 
-    assert replacements[0]["command"][0] == str(
-        (tmp_path / "tools" / executable).resolve()
-    )
+    expected = str((tmp_path / "tools" / executable).resolve())
+    if debug:
+        assert run_calls is not None
+        assert run_calls[0]["command"][0] == expected
+    else:
+        assert run_calls is None
 
 
 @pytest.mark.parametrize(
@@ -449,8 +487,7 @@ def test_launch_entrypoint_go_debug_runs_delve_without_accept_multiclient(
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     entrypoint = entrypoint_factory(alias="go-api", command="go run ./cmd/api")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
-    _stub_cleanup(monkeypatch)
-    replacements = _stub_replace(monkeypatch)
+    run_calls = _stub_run_go_debug(monkeypatch)
 
     launch_entrypoint(
         config_dir=tmp_path,
@@ -463,7 +500,7 @@ def test_launch_entrypoint_go_debug_runs_delve_without_accept_multiclient(
         print_debug=lambda _message: None,
     )
 
-    command = replacements[0]["command"]
+    command = run_calls[0]["command"]
     assert "--accept-multiclient" not in command
     assert "--continue" not in command
     assert command == (
@@ -489,8 +526,7 @@ def test_launch_entrypoint_go_debug_tests_command(
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     entrypoint = entrypoint_factory(alias="go-tests", command="go test ./internal/api")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
-    _stub_cleanup(monkeypatch)
-    replacements = _stub_replace(monkeypatch)
+    run_calls = _stub_run_go_debug(monkeypatch)
 
     launch_entrypoint(
         config_dir=tmp_path,
@@ -503,7 +539,7 @@ def test_launch_entrypoint_go_debug_tests_command(
         print_debug=lambda _message: None,
     )
 
-    assert replacements[0]["command"] == (
+    assert run_calls[0]["command"] == (
         "/tools/dlv",
         "test",
         "--headless",
@@ -526,8 +562,7 @@ def test_launch_entrypoint_go_debug_tests_in_cwd(
     monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     entrypoint = entrypoint_factory(alias="go-tests", command="go test")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
-    _stub_cleanup(monkeypatch)
-    replacements = _stub_replace(monkeypatch)
+    run_calls = _stub_run_go_debug(monkeypatch)
 
     launch_entrypoint(
         config_dir=tmp_path,
@@ -540,7 +575,7 @@ def test_launch_entrypoint_go_debug_tests_in_cwd(
         print_debug=lambda _message: None,
     )
 
-    assert replacements[0]["command"] == (
+    assert run_calls[0]["command"] == (
         "/tools/dlv",
         "test",
         "--headless",
@@ -554,18 +589,16 @@ def test_launch_entrypoint_go_debug_tests_in_cwd(
     )
 
 
-def test_launch_entrypoint_go_debug_cleans_stale_before_replace(
+def test_launch_entrypoint_go_debug_delegates_to_run_go_debug(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Очистка зависшего Delve выполняется до замены процесса."""
+    """Go-отладка делегирует lifecycle в run_go_debug с правильными аргументами."""
     entrypoint = entrypoint_factory(alias="go-api", command="go run ./cmd/api")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
-    events: list[str] = []
-    cleanup_calls = _stub_cleanup(monkeypatch, sink=events)
-    _stub_replace(monkeypatch, sink=events)
+    run_calls = _stub_run_go_debug(monkeypatch, return_code=_CHILD_EXIT_CODE)
 
-    launch_entrypoint(
+    code = launch_entrypoint(
         config_dir=tmp_path,
         entrypoint=entrypoint,
         target_args=(),
@@ -576,34 +609,12 @@ def test_launch_entrypoint_go_debug_cleans_stale_before_replace(
         print_debug=lambda _message: None,
     )
 
-    assert events == ["cleanup", "replace"]
-    assert cleanup_calls[0]["port"] == _GO_DEBUG_PORT
-    assert cleanup_calls[0]["matchers"] == services.debugger_matchers(Runtime.GO)
-
-
-def test_launch_entrypoint_go_debug_prints_dlv_status(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Сообщает адрес Delve без квалификатора ожидания."""
-    entrypoint = entrypoint_factory(alias="go-api", command="go run ./cmd/api")
-    monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
-    _stub_cleanup(monkeypatch)
-    _stub_replace(monkeypatch)
-    debug_messages: list[str] = []
-
-    launch_entrypoint(
-        config_dir=tmp_path,
-        entrypoint=entrypoint,
-        target_args=(),
-        debug=True,
-        debug_port=2345,
-        no_env=False,
-        print_message=lambda _message: None,
-        print_debug=debug_messages.append,
-    )
-
-    assert debug_messages == ["dlv: 127.0.0.1:2345"]
+    assert code == _CHILD_EXIT_CODE
+    call = run_calls[0]
+    assert call["port"] == _GO_DEBUG_PORT
+    assert call["matchers"] == services.debugger_matchers(Runtime.GO)
+    assert call["working_dir"] == tmp_path
+    assert "PYDEVD_DISABLE_FILE_VALIDATION" not in call["environment"]
 
 
 def test_launch_entrypoint_rejects_go_build_debug(
@@ -668,7 +679,6 @@ def test_launch_entrypoint_rejects_ambiguous_go_debug_target(
     """Не принимает Go-флаг за пакет Delve; target-аргументы требует после `--`."""
     entrypoint = entrypoint_factory(alias="go-tests", command="go test -run")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
-    _stub_replace(monkeypatch)
 
     with pytest.raises(SystemExit, match=r"Некорректный target.*после '--'"):
         launch_entrypoint(
@@ -695,7 +705,6 @@ def test_launch_entrypoint_rejects_multi_package_go_debug_target(
     """Не передаёт dlv test package-паттерн, способный выбрать несколько пакетов."""
     entrypoint = entrypoint_factory(alias="go-tests", command=f"go test {target}")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
-    _stub_replace(monkeypatch)
 
     with pytest.raises(SystemExit, match=r"package-паттерн.*один Go package"):
         launch_entrypoint(

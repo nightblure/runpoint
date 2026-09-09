@@ -3,26 +3,9 @@
 CLI для запуска настроенных точек входа Python и Go в обычном режиме или с
 подключением отладчика.
 
-## Установка для разработки
-
-Пакет поддерживает Python 3.10 и новее. Для разработки нужны Python 3.14 и
-[`uv`](https://docs.astral.sh/uv/).
-
-```shell
-make sync
-```
-
-Основные проверки:
-
-```shell
-make check
-make test
-make build
-```
-
 ## Конфигурация
 
-Runpoint ищет `.runpoint.json` или `.runpoint.jsonc` в текущей и родительских
+**Runpoint** ищет `.runpoint.json` или `.runpoint.jsonc` в текущей и родительских
 директориях. Корень файла должен содержать список точек входа:
 
 ```jsonc
@@ -79,8 +62,8 @@ runpoint go-api --debug -- --port 8080
 runpoint api --debug --debug-port 7000
 ```
 
-Python всегда запускается через `debugpy` с ожиданием подключения IDE
-(`--wait-for-client`) и подключением дочерних процессов (`--configure-subProcess
+Python всегда запускается через `debugpy` с ожиданием подключения IDE (`--wait-for-client`) и подключением дочерних
+процессов (`--configure-subProcess
 True`). Delve запускается в single-client режиме: после отключения IDE он
 самостоятельно завершает сервер и target, поэтому `--accept-multiclient` и
 `--continue` не нужны.
@@ -106,19 +89,39 @@ child и возвращает код 130 по SIGINT.
 
 ### Zed
 
-Создайте `.zed/debug.json` в запускаемом проекте:
+Создать `.zed/debug.json` в запускаемом проекте:
 
 ```jsonc
+// https://zed.dev/docs/languages/go#debugging
+// https://zed.dev/docs/languages/python#debugging
+// https://zed.dev/docs/languages/python#debug-a-flask-app
 [
   {
-    "label": "runpoint",
+    "label": "go_debug",
+    "adapter": "Delve",
+    "request": "attach",
+    "mode": "remote",
+    "tcp_connection": {
+      "host": "127.0.0.1",
+      "port": 2345,
+    },
+    "justMyCode": false,
+    "subProcess": true,
+  },
+  {
+    "label": "py_debug",
     "type": "python",
     "adapter": "Debugpy",
     "request": "attach",
-    "connect": { "port": 5678 },
+    "connect": { 
+      "host": "127.0.0.1",
+      "port": 5678 
+    },
     "justMyCode": false,
-    "subProcess": true
-  }
+    "subProcess": true,
+    // not tested!
+    "autoReload": { "enable": true },
+  },
 ]
 ```
 

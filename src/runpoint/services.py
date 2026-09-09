@@ -253,6 +253,40 @@ def run_python_debug(  # noqa: PLR0913
     return _resolve_exit_code(process.returncode)
 
 
+def run_go_debug(  # noqa: PLR0913
+    *,
+    command: list[str],
+    working_dir: Path,
+    environment: dict[str, str],
+    port: int,
+    matchers: Sequence[StaleDebuggerMatcher],
+    print_debug: Callable[[str], None],
+) -> int:
+    """Запускает Go-отладку дочерним процессом с pre/finally очисткой.
+
+    Child остаётся в одной foreground process group с Runpoint, поэтому
+    терминальный Ctrl-C доходит до dlv; Runpoint ждёт завершения child и
+    возвращает 130 по SIGINT. После завершения удаляет dlv-бинарник.
+    """
+    cleanup_stale_debuggers(port=port, matchers=matchers, print_debug=print_debug)
+    cleanup_stale_debug_binary(port=port)
+    print_debug(f"dlv: 127.0.0.1:{port}")
+    process = subprocess.Popen(  # noqa: S603 -- command is built explicitly, no shell
+        command,
+        cwd=str(working_dir),
+        env=environment,
+    )
+    try:
+        process.wait()
+    except KeyboardInterrupt:
+        _terminate_child_process(process)
+    finally:
+        cleanup_stale_debuggers(port=port, matchers=matchers, print_debug=print_debug)
+        cleanup_stale_debug_binary(port=port)
+
+    return _resolve_exit_code(process.returncode)
+
+
 def _terminate_child_process(process: subprocess.Popen[bytes]) -> None:
     """Bounded shutdown после Ctrl-C: SIGTERM→SIGKILL; повторный Ctrl-C→SIGKILL."""
     try:
