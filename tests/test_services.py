@@ -1,6 +1,7 @@
 """Проверяет runtime-сервисы запуска."""
 
 import subprocess
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from runpoint.services import (
     DelveMatcher,
     build_go_debug_command,
     build_python_command,
+    cleanup_stale_debug_binary,
     cleanup_stale_debuggers,
     load_env_variables,
     resolve_python_executable,
@@ -76,8 +78,12 @@ def test_build_command_without_debug_runs_target_directly() -> None:
     ]
 
 
-def test_build_go_debug_command_runs_without_accept_multiclient_or_continue() -> None:
+def test_build_go_debug_command_runs_without_accept_multiclient_or_continue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Запускает Go через single-client Delve без --accept-multiclient и --continue."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     entrypoint = entrypoint_factory(alias="go-api", command="go run ./cmd/api")
 
     command = build_go_debug_command(
@@ -93,6 +99,8 @@ def test_build_go_debug_command_runs_without_accept_multiclient_or_continue() ->
         "--headless",
         "--listen=127.0.0.1:2345",
         "--api-version=2",
+        "--output",
+        str(tmp_path / "runpoint-dlv-2345"),
         "./cmd/api",
         "--",
         "--port",
@@ -100,8 +108,12 @@ def test_build_go_debug_command_runs_without_accept_multiclient_or_continue() ->
     ]
 
 
-def test_build_go_debug_command_tests_without_accept_multiclient() -> None:
+def test_build_go_debug_command_tests_without_accept_multiclient(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Запускает Go-тесты через single-client Delve."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     entrypoint = entrypoint_factory(alias="go-tests", command="go test ./internal/api")
 
     command = build_go_debug_command(
@@ -117,6 +129,8 @@ def test_build_go_debug_command_tests_without_accept_multiclient() -> None:
         "--headless",
         "--listen=127.0.0.1:2346",
         "--api-version=2",
+        "--output",
+        str(tmp_path / "runpoint-dlv-2346"),
         "./internal/api",
         "--",
         "-test.run",
@@ -788,6 +802,30 @@ def test_run_python_debug_proceeds_after_failed_cleanup(
     assert code == 0
     assert psutil_fake.terminated
     assert psutil_fake.killed
+
+
+def test_cleanup_stale_debug_binary_removes_existing_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Удаляет оставшийся dlv-бинарник перед запуском."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    binary = tmp_path / "runpoint-dlv-2345"
+    binary.touch()
+
+    cleanup_stale_debug_binary(port=2345)
+
+    assert not binary.exists()
+
+
+def test_cleanup_stale_debug_binary_skips_missing_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Не падает, если бинарник уже отсутствует."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+
+    cleanup_stale_debug_binary(port=2345)
 
 
 # --- Python debug lifecycle -------------------------------------------------

@@ -83,6 +83,7 @@ def launch_entrypoint(  # noqa: PLR0913
             matchers=matchers,
             print_debug=print_debug,
         )
+        services.cleanup_stale_debug_binary(port=debug_port)
         print_debug(f"dlv: 127.0.0.1:{debug_port}")
         services.replace_process(
             working_dir=working_dir,

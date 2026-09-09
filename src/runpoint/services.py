@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -210,6 +211,15 @@ def _wait_process(*, process: psutil.Process) -> bool:
         return True
     else:
         return True
+
+
+def _dlv_output_path(port: int) -> Path:
+    return Path(tempfile.gettempdir()) / f"runpoint-dlv-{port}"
+
+
+def cleanup_stale_debug_binary(*, port: int) -> None:
+    """Удаляет оставшийся dlv-бинарник из прошлой отладочной сессии."""
+    _dlv_output_path(port).unlink(missing_ok=True)
 
 
 def run_python_debug(  # noqa: PLR0913
@@ -548,6 +558,8 @@ def build_go_debug_command(
         "--headless",
         f"--listen=127.0.0.1:{port}",
         "--api-version=2",
+        "--output",
+        str(_dlv_output_path(port)),
     ]
 
     command.extend(configured_args[1:])

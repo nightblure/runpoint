@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from typing import TYPE_CHECKING, TypedDict
 
 import pytest
@@ -445,6 +446,7 @@ def test_launch_entrypoint_go_debug_runs_delve_without_accept_multiclient(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Запускает single-client Delve без --accept-multiclient и --continue."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     entrypoint = entrypoint_factory(alias="go-api", command="go run ./cmd/api")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
     _stub_cleanup(monkeypatch)
@@ -470,6 +472,8 @@ def test_launch_entrypoint_go_debug_runs_delve_without_accept_multiclient(
         "--headless",
         "--listen=127.0.0.1:2345",
         "--api-version=2",
+        "--output",
+        str(tmp_path / "runpoint-dlv-2345"),
         "./cmd/api",
         "--",
         "--port",
@@ -482,6 +486,7 @@ def test_launch_entrypoint_go_debug_tests_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Запускает dlv test для одного package без --accept-multiclient."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     entrypoint = entrypoint_factory(alias="go-tests", command="go test ./internal/api")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
     _stub_cleanup(monkeypatch)
@@ -504,6 +509,8 @@ def test_launch_entrypoint_go_debug_tests_command(
         "--headless",
         "--listen=127.0.0.1:2346",
         "--api-version=2",
+        "--output",
+        str(tmp_path / "runpoint-dlv-2346"),
         "./internal/api",
         "--",
         "-test.run",
@@ -516,6 +523,7 @@ def test_launch_entrypoint_go_debug_tests_in_cwd(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Запускает dlv test без package для тестов текущей директории."""
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
     entrypoint = entrypoint_factory(alias="go-tests", command="go test")
     monkeypatch.setattr("shutil.which", lambda _executable: "/tools/dlv")
     _stub_cleanup(monkeypatch)
@@ -538,6 +546,8 @@ def test_launch_entrypoint_go_debug_tests_in_cwd(
         "--headless",
         "--listen=127.0.0.1:2346",
         "--api-version=2",
+        "--output",
+        str(tmp_path / "runpoint-dlv-2346"),
         "--",
         "-test.run",
         "TestAPI",
