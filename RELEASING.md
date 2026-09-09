@@ -25,8 +25,12 @@ make test
 
 ```shell
 git switch main && git pull
-make bump_patch/make bump_minor
-git add. && git commit && git push
+
+make bump_patch && uv lock
+# or
+make bump_minor && uv lock
+
+git add . && git commit -m "bump version" && git push
 VERSION="$(uv version --short)"
 git tag -a "v${VERSION}" -m "runpoint v${VERSION}"
 git push origin "v${VERSION}"

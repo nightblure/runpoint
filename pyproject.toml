@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "runpoint"
 package = false
-version = "0.3.0"
+version = "0.3.1"
 description = "CLI launcher for configured Python and Go entry points"
 readme = "README.md"
 requires-python = ">=3.10.0"
