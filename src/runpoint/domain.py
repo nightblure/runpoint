@@ -165,11 +165,7 @@ def _find_shell_operator(command: str) -> str | None:  # noqa: C901, PLR0911
                 quote = None
             elif quote == '"' and character == "`":
                 return "`"
-            elif (
-                quote == '"'
-                and character == "$"
-                and command[index + 1 : index + 2] == "("
-            ):
+            elif quote == '"' and character == "$" and command[index + 1 : index + 2] == "(":
                 return "$("
             index += 1
             continue
@@ -321,42 +317,22 @@ class Entrypoint:
         first = args[0]
 
         if first == GO_EXECUTABLE:
-            message = (
-                "После 'go' в команде точки входа должна быть подкоманда: "
-                "'go test', 'go run' или 'go build'"
-            )
+            message = "После 'go' в команде точки входа должна быть подкоманда: 'go test', 'go run' или 'go build'"
         elif first in PYTHON_EXECUTABLES:
-            message = (
-                f"После {first!r} в команде точки входа должен быть модуль "
-                "или путь к Python-скрипту"
-            )
+            message = f"После {first!r} в команде точки входа должен быть модуль или путь к Python-скрипту"
         elif first == "-m":
-            message = (
-                "Форма '-m <модуль>' без интерпретатора не поддерживается; "
-                "укажите явно: python -m <модуль>"
-            )
+            message = "Форма '-m <модуль>' без интерпретатора не поддерживается; укажите явно: python -m <модуль>"
         elif first == "-c":
-            message = (
-                "Режим '-c <python-код>' не поддерживается; "
-                "оформите код как модуль или Python-скрипт"
-            )
+            message = "Режим '-c <python-код>' не поддерживается; оформите код как модуль или Python-скрипт"
         else:
-            supported = "; ".join(
-                description for _, _, description in RUNTIME_DETECTORS
-            )
-            message = (
-                "Не удалось определить runtime команды точки входа. "
-                f"Поддерживаемые формы: {supported}"
-            )
+            supported = "; ".join(description for _, _, description in RUNTIME_DETECTORS)
+            message = f"Не удалось определить runtime команды точки входа. Поддерживаемые формы: {supported}"
 
         return message
 
     def _validate(self) -> None:
         if not self.alias or not self.alias[0].isalpha():
-            message = (
-                "Алиас точки входа должен быть непустым и начинаться с буквы: "
-                f"{self.alias!r}"
-            )
+            message = f"Алиас точки входа должен быть непустым и начинаться с буквы: {self.alias!r}"
             raise ValueError(message)
 
         args = self.command_args()
@@ -369,10 +345,7 @@ class Entrypoint:
 
     def _validate_go(self, args: tuple[str, ...]) -> None:
         if args[0] not in GO_COMMANDS:
-            message = (
-                "Go-команда точки входа должна начинаться с "
-                "'go test', 'go run' или 'go build'"
-            )
+            message = "Go-команда точки входа должна начинаться с 'go test', 'go run' или 'go build'"
             raise ValueError(message)
 
         source_file = _find_go_source_file(args)
@@ -392,16 +365,11 @@ class Entrypoint:
 
     def _validate_python(self, args: tuple[str, ...]) -> None:
         if args[0] == "-c":
-            message = (
-                "Режим '-c <python-код>' не поддерживается; "
-                "оформите код как модуль или Python-скрипт"
-            )
+            message = "Режим '-c <python-код>' не поддерживается; оформите код как модуль или Python-скрипт"
             raise ValueError(message)
 
         if args[0].startswith("-") and args[0] != "-m":
-            message = (
-                "Команда точки входа должна начинаться с '-m' или пути к Python-скрипту"
-            )
+            message = "Команда точки входа должна начинаться с '-m' или пути к Python-скрипту"
             raise ValueError(message)
 
         if args[0] == "-m" and len(args) == 1:
@@ -410,10 +378,7 @@ class Entrypoint:
 
         target_name = self._target_name()
         if target_name.casefold() == "make" or "make " in self.command.lower():
-            message = (
-                "Точка входа не должна запускать make; "
-                "укажите вместо make явную Python-команду"
-            )
+            message = "Точка входа не должна запускать make; укажите вместо make явную Python-команду"
             raise ValueError(message)
 
         if self.load_env_file and self.is_test():

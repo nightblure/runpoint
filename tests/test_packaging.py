@@ -13,9 +13,7 @@ def test_project_metadata_exposes_only_runpoint_product() -> None:
     assert pyproject["project"]["scripts"] == {
         "runpoint": "runpoint.cli:main",
     }
-    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == [
-        "src/runpoint"
-    ]
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"] == ["src/runpoint"]
 
 
 def test_project_metadata_declares_posix_runtime() -> None:

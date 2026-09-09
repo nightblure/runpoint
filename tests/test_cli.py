@@ -62,9 +62,7 @@ def test_list_prints_entrypoints_sorted_by_alias() -> None:
     output = unstyle(result.stdout)
 
     assert result.exit_code == 0
-    assert output == (
-        "api       python -m api\nworker    python worker.py  (cwd=src)\n"
-    )
+    assert output == ("api       python -m api\nworker    python worker.py  (cwd=src)\n")
 
 
 def test_missing_alias_keeps_cli_error() -> None:
@@ -137,9 +135,7 @@ def test_run_propagates_python_debug_exit_code(
         target_args=(),
         entrypoints=(entrypoint,),
     )
-    monkeypatch.setattr(
-        use_cases, "launch_entrypoint", lambda **_kwargs: CHILD_EXIT_CODE
-    )
+    monkeypatch.setattr(use_cases, "launch_entrypoint", lambda **_kwargs: CHILD_EXIT_CODE)
 
     result = runner.invoke(app, ["worker", "--debug"], obj=context)
 

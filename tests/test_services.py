@@ -57,9 +57,7 @@ def test_build_command_configures_debugpy_and_preserves_target_args() -> None:
 
 def test_build_command_without_debug_runs_target_directly() -> None:
     """Не добавляет debugpy к обычному запуску."""
-    entrypoint = entrypoint_factory(
-        alias="worker", command="python worker.py --mode safe"
-    )
+    entrypoint = entrypoint_factory(alias="worker", command="python worker.py --mode safe")
 
     command = build_python_command(
         port=5678,
@@ -846,9 +844,7 @@ class _FakePopen:
         events: list[str] | None = None,
     ) -> None:
         self.returncode = returncode
-        self._wait_sequence: Sequence[BaseException | None] = (
-            wait_sequence if wait_sequence is not None else ()
-        )
+        self._wait_sequence: Sequence[BaseException | None] = wait_sequence if wait_sequence is not None else ()
         self._waits = 0
         self._events = events
         self.terminated = False

@@ -114,8 +114,7 @@ def _is_debugpy_adapter_path(argument: str) -> bool:
 
 def _has_exact_option(*, args: list[str], option: str, value: str) -> bool:
     return any(
-        (argument == option and index + 1 < len(args) and args[index + 1] == value)
-        or argument == f"{option}={value}"
+        (argument == option and index + 1 < len(args) and args[index + 1] == value) or argument == f"{option}={value}"
         for index, argument in enumerate(args)
     )
 
@@ -176,9 +175,7 @@ def _terminate_debugger_process(
     except psutil.NoSuchProcess:
         return
     except psutil.AccessDenied:
-        print_debug(
-            f"Порт {port}: нет прав на завершение PID {pid}; освободите порт вручную"
-        )
+        print_debug(f"Порт {port}: нет прав на завершение PID {pid}; освободите порт вручную")
         return
 
     if _wait_process(process=process):
@@ -189,16 +186,11 @@ def _terminate_debugger_process(
     except psutil.NoSuchProcess:
         return
     except psutil.AccessDenied:
-        print_debug(
-            f"Порт {port}: нет прав на завершение PID {pid}; освободите порт вручную"
-        )
+        print_debug(f"Порт {port}: нет прав на завершение PID {pid}; освободите порт вручную")
         return
 
     if not _wait_process(process=process):
-        print_debug(
-            f"Порт {port}: процесс PID {pid} не завершился после SIGKILL; "
-            "освободите порт вручную"
-        )
+        print_debug(f"Порт {port}: процесс PID {pid} не завершился после SIGKILL; освободите порт вручную")
 
 
 def _wait_process(*, process: psutil.Process) -> bool:
@@ -333,10 +325,7 @@ def resolve_working_directory(*, config_dir: Path, entrypoint: Entrypoint) -> Pa
     working_dir = (config_dir / entrypoint.cwd).resolve()
 
     if not working_dir.is_dir():
-        message = (
-            f"Рабочая директория точки входа {entrypoint.alias!r} не найдена: "
-            f"{working_dir}"
-        )
+        message = f"Рабочая директория точки входа {entrypoint.alias!r} не найдена: {working_dir}"
         raise SystemExit(message)
 
     return working_dir
@@ -355,8 +344,7 @@ def resolve_python_executable(*, working_dir: Path, entrypoint: Entrypoint) -> P
             return candidate
 
     message = (
-        f"Python виртуального окружения точки входа {entrypoint.alias!r} не найден. "
-        f"Проверена директория: {venv_dir}"
+        f"Python виртуального окружения точки входа {entrypoint.alias!r} не найден. Проверена директория: {venv_dir}"
     )
     raise SystemExit(message)
 
@@ -570,20 +558,11 @@ def build_go_debug_command(
     invalid_target = target_count == 1 and configured_args[1].startswith("-")
 
     if target_count > 1 or invalid_target or (operation == "run" and target_count != 1):
-        message = (
-            f"Некорректный target Go-команды {operation!r}; "
-            "аргументы target передавайте после '--'"
-        )
+        message = f"Некорректный target Go-команды {operation!r}; аргументы target передавайте после '--'"
         raise SystemExit(message)
 
-    if target_count == 1 and (
-        "..." in configured_args[1]
-        or configured_args[1] in {"all", "std", "cmd", "tool"}
-    ):
-        message = (
-            f"Go debug не поддерживает package-паттерн {configured_args[1]!r}; "
-            f"укажите один Go package"
-        )
+    if target_count == 1 and ("..." in configured_args[1] or configured_args[1] in {"all", "std", "cmd", "tool"}):
+        message = f"Go debug не поддерживает package-паттерн {configured_args[1]!r}; укажите один Go package"
         raise SystemExit(message)
 
     command = [

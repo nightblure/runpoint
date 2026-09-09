@@ -177,18 +177,14 @@ def load_entrypoints(config_path: Path) -> tuple[Entrypoint, ...]:
         message = f"Корнем {config_path} должен быть список JSON-объектов"
         raise SystemExit(message)
 
-    known_fields = frozenset[str](
-        field.name for field in dataclasses.fields(Entrypoint) if field.init
-    )
+    known_fields = frozenset[str](field.name for field in dataclasses.fields(Entrypoint) if field.init)
 
     if not raw_config:
         message = "Конфигурация пуста"
         raise SystemExit(message)
 
     items = cast("list[object]", raw_config)
-    entrypoints = tuple(
-        _parse_entrypoint(item, known_fields=known_fields) for item in items
-    )
+    entrypoints = tuple(_parse_entrypoint(item, known_fields=known_fields) for item in items)
     aliases = [entrypoint.alias for entrypoint in entrypoints]
 
     if len(aliases) != len(set(aliases)):

@@ -46,9 +46,7 @@ def print_entrypoints(entrypoints: Sequence[domain.Entrypoint]) -> None:
     for entrypoint in sorted(entrypoints, key=lambda item: item.alias):
         kind = "test" if entrypoint.is_test() else "app"
         cwd_note = "" if entrypoint.cwd == Path() else f"  (cwd={entrypoint.cwd})"
-        rich_print(
-            f"{entrypoint.alias:<{width}}  [{kind}]  {entrypoint.command}{cwd_note}"
-        )
+        rich_print(f"{entrypoint.alias:<{width}}  [{kind}]  {entrypoint.command}{cwd_note}")
 
 
 def _print_message(message: str) -> None:
@@ -62,11 +60,7 @@ def _print_debug(message: str) -> None:
 def complete_alias(ctx: typer.Context, incomplete: str) -> list[str]:
     """Возвращает алиасы, подходящие для автодополнения."""
     launcher_context = cast("LauncherContext", ctx.obj)
-    return [
-        entrypoint.alias
-        for entrypoint in launcher_context.entrypoints
-        if entrypoint.alias.startswith(incomplete)
-    ]
+    return [entrypoint.alias for entrypoint in launcher_context.entrypoints if entrypoint.alias.startswith(incomplete)]
 
 
 app = typer.Typer(pretty_exceptions_enable=False)
@@ -74,10 +68,7 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 @app.command(
     help="Запускает одну точку входа Python или Go",
-    epilog=(
-        "Аргументы точки входа передаются после '--', например: "
-        "runpoint testcur -- -k test_name"
-    ),
+    epilog=("Аргументы точки входа передаются после '--', например: runpoint testcur -- -k test_name"),
 )
 def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
     ctx: typer.Context,
@@ -155,10 +146,7 @@ def main() -> None:
             break
 
     if config_path is None:
-        message = (
-            f"Файл конфигурации {cfg_filename} не найден в {cwd} "
-            "и родительских директориях"
-        )
+        message = f"Файл конфигурации {cfg_filename} не найден в {cwd} и родительских директориях"
         raise SystemExit(message)
 
     entrypoints = data.load_entrypoints(config_path)
