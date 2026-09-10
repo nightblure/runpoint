@@ -7,6 +7,13 @@
 CLI для запуска настроенных точек входа Python и Go в обычном режиме или с
 подключением отладчика.
 
+# Before using
+
+```shell
+echo "alias runpoint='/usr/local/bin/python3 -m runpoint'" >> ~/.zshrc
+source ~/.zshrc
+```
+
 ## Конфигурация
 
 **Runpoint** ищет `.runpoint.json` или `.runpoint.jsonc` в текущей и родительских
