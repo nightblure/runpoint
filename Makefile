@@ -35,8 +35,18 @@ test_py:
 build:
 	$(UV) run hatch build
 
-bump_patch:
-	uv version --bump patch
+push_tag:
+	git add . && git commit -m "bump version" && git push
+	VERSION="$(uv version --short)"
+	git tag -a "v${VERSION}" -m "runpoint v${VERSION}"
+	git push origin "v${VERSION}"
+
+release_patch:
+	git switch main && git pull
+	uv version --bump patch && uv lock
+	make push_tag
 
 bump_minor:
-	uv version --bump minor
+	git switch main && git pull
+	uv version --bump minor && uv lock
+	make push_tag

@@ -24,16 +24,9 @@ make test
 После merge обновить локальную ветку и создать тег из версии проекта:
 
 ```shell
-git switch main && git pull
-
-make bump_patch && uv lock
-# or
-make bump_minor && uv lock
-
-git add . && git commit -m "bump version" && git push
-VERSION="$(uv version --short)"
-git tag -a "v${VERSION}" -m "runpoint v${VERSION}"
-git push origin "v${VERSION}"
+make release_patch
+# OR
+make release_minor
 ```
 
 Удаление тегов:
