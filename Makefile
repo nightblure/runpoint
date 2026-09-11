@@ -36,7 +36,6 @@ build:
 	$(UV) run hatch build
 
 push_tag:
-	git add . && git commit -m "bump version" && git push
 	VERSION="$(uv version --short)"
 	git tag -a "v${VERSION}" -m "runpoint v${VERSION}"
 	git push origin "v${VERSION}"
@@ -44,9 +43,10 @@ push_tag:
 release_patch:
 	git switch main && git pull
 	uv version --bump patch && uv lock
-	make push_tag
+	git add . && git commit -m "bump version" && git push
 
 bump_minor:
 	git switch main && git pull
 	uv version --bump minor && uv lock
-	make push_tag
+	git add . && git commit -m "bump version" && git push
+
