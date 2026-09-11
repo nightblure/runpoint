@@ -85,6 +85,7 @@ def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
         bool,
         typer.Option(
             "--debug",
+            "-d",
             help="запустить через debugpy или Delve и принять подключение от IDE",
         ),
     ] = False,
@@ -92,6 +93,7 @@ def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
         int | None,
         typer.Option(
             "--debug-port",
+            "--dp",
             metavar="PORT",
             help="порт отладочного сервера",
         ),
