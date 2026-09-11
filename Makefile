@@ -40,7 +40,7 @@ push_tag:
 	git tag -a "v${VERSION}" -m "runpoint v${VERSION}"
 	git push origin "v${VERSION}"
 
-release_patch:
+bump_patch:
 	git switch main && git pull
 	uv version --bump patch && uv lock
 	git add . && git commit -m "bump version" && git push
