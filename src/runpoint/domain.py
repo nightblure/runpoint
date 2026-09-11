@@ -250,6 +250,7 @@ class Entrypoint:
     cwd: Path = Path()
     venv: Path = Path(".venv")
     env_file: Path = Path(".env")
+    debug_port: int | None = None
     env: Mapping[str, str] = dataclasses.field(default_factory=dict)
     _command_args: tuple[str, ...] = dataclasses.field(init=False, repr=False)
 
@@ -413,6 +414,7 @@ def entrypoint_factory(  # noqa: PLR0913 -- mirrors the configuration schema
     cwd: str | Path = ".",
     venv: str | Path = ".venv",
     env_file: str | Path = ".env",
+    debug_port: int | None = None,
     load_env_file: bool = False,
     env: Mapping[str, str] | None = None,
 ) -> Entrypoint:
@@ -425,4 +427,10 @@ def entrypoint_factory(  # noqa: PLR0913 -- mirrors the configuration schema
         command=command,
         env=dict(env or {}),
         load_env_file=load_env_file,
+        debug_port=debug_port,
     )
+
+
+@dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
+class GlobalConfig:
+    debug_port: int | None = None

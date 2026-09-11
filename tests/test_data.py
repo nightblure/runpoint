@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from runpoint.data import find_config_path, load_entrypoints
+from runpoint.data import find_config_path, load_entrypoints, load_raw_config
 from runpoint.domain import Runtime
 
 
@@ -271,8 +271,9 @@ def test_load_entrypoints_does_not_treat_go_option_values_as_source_targets(
         json.dumps([{"alias": "go-command", "command": command}]),
         encoding="utf-8",
     )
+    raw_config = load_raw_config(config_path)
 
-    entrypoint = load_entrypoints(config_path)[0]
+    entrypoint = load_entrypoints(raw_config)[0]
 
     assert entrypoint.command_args() == tuple(command.split()[1:])
 
@@ -301,9 +302,10 @@ def test_load_entrypoints_rejects_invalid_config(
     """Отклоняет структурно некорректные конфигурации."""
     config_path = tmp_path / ".runpoint.json"
     config_path.write_text(content, encoding="utf-8")
+    raw_config = load_raw_config(config_path)
 
     with pytest.raises(SystemExit, match=message):
-        load_entrypoints(config_path)
+        load_entrypoints(raw_config)
 
 
 def test_find_config_path_returns_nearest_parent_config(tmp_path: Path) -> None:
