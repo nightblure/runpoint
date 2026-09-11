@@ -43,10 +43,10 @@ push_tag:
 bump_patch:
 	git switch main && git pull
 	uv version --bump patch && uv lock
-	git add . && git commit -m "bump version" && git push
+	make lint && make test && git add . && git commit -m "bump version" && git push
 
 bump_minor:
 	git switch main && git pull
 	uv version --bump minor && uv lock
-	git add . && git commit -m "bump version" && git push
+	make lint && make test && git add . && git commit -m "bump version" && git push
 
