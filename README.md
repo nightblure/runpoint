@@ -20,26 +20,40 @@ source ~/.zshrc
 директориях. Корень файла должен содержать список точек входа:
 
 ```jsonc
-[
-  {
-    "alias": "tests",
-    "command": "pytest"
+{
+  "global_config": {
+    "debug_port": 5679
   },
-  {
-    "alias": "api",
-    "command": "python -m app",
-    "cwd": "services/api",
-    "venv": ".venv",
-    "load_env_file": true,
-    "env_file": ".env",
-    "env": { "LOG_LEVEL": "debug" }
-  },
-  {
-    "alias": "go-api",
-    "command": "go run ./cmd/api",
-    "cwd": "services/go-api"
-  }
-]
+  "entrypoints": [
+    {
+      "alias": "tests",
+      "command": "pytest"
+      // overrides global debug_port
+      //      "debug_port": 5680
+    },
+    {
+      "alias": "api",
+      "command": "python -m app",
+      "cwd": "services/api",
+      "venv": ".venv",
+      "load_env_file": true,
+      "env_file": ".env",
+      "env": {
+        "LOG_LEVEL": "debug"
+      }
+    },
+    {
+      "alias": "go_api",
+      "command": "go run ./cmd/api",
+      "cwd": "services/go-api",
+      "load_env_file": true,
+    },
+    {
+      "alias": "tc",
+      "command": "pytest -m curr -rA"
+    }
+  ]
+}
 ```
 
 Пути `cwd` и `env_file` задаются относительно директории конфигурации, а

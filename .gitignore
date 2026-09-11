@@ -31,3 +31,4 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+cfg.jsonc
