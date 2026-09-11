@@ -69,7 +69,7 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 @app.command(
     help="Запускает одну точку входа Python или Go",
-    epilog=("Аргументы точки входа передаются после '--', например: runpoint testcur -- -k test_name"),
+    epilog="Аргументы точки входа передаются после '--', например: runpoint testcur -- -k test_name",
 )
 def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
     ctx: typer.Context,

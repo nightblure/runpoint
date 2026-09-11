@@ -433,4 +433,6 @@ def entrypoint_factory(  # noqa: PLR0913 -- mirrors the configuration schema
 
 @dataclasses.dataclass(frozen=True, slots=True, kw_only=True)
 class GlobalConfig:
+    """Глобальные параметры запуска точек входа."""
+
     debug_port: int | None = None

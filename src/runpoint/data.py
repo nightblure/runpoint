@@ -175,7 +175,6 @@ def _parse_global_config(raw_global_config: object, known_fields: frozenset[str]
     config = cast("dict[str, object]", raw_global_config)
 
     debug_port: int | None = None
-    print(config)
 
     if "debug_port" in config:
         debug_port = _require_type(
@@ -232,9 +231,10 @@ def load_raw_config(config_path: Path) -> dict[str, Any]:
 
 
 def load_entrypoints(raw_config: dict[str, Any]) -> tuple[Entrypoint, ...]:
+    """Загружает точки входа из конфигурации."""
     known_entrypoint_fields = frozenset[str](field.name for field in dataclasses.fields(Entrypoint) if field.init)
 
-    raw_entrypoints: list[object] = raw_config["entrypoints"]
+    raw_entrypoints = cast("list[object]", raw_config["entrypoints"])
     entrypoints = tuple(_parse_entrypoint(item, known_fields=known_entrypoint_fields) for item in raw_entrypoints)
 
     aliases = [entrypoint.alias for entrypoint in entrypoints]
@@ -246,15 +246,15 @@ def load_entrypoints(raw_config: dict[str, Any]) -> tuple[Entrypoint, ...]:
     return entrypoints
 
 
-def load_global_config(raw_config: dict[str, Any]):
+def load_global_config(raw_config: dict[str, Any]) -> GlobalConfig:
+    """Загружает глобальные параметры из конфигурации."""
     known_global_config_fields = frozenset[str](field.name for field in dataclasses.fields(GlobalConfig) if field.init)
     raw_global_config: dict[str, Any] = raw_config.get("global_config", {})
 
     if not raw_global_config:
         return GlobalConfig()
 
-    cfg = _parse_global_config(raw_global_config, known_global_config_fields)
-    return cfg
+    return _parse_global_config(raw_global_config, known_global_config_fields)
 
 
 def dotenv_values(dotenv_path: Path) -> dict[str, str]:
