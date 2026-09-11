@@ -1,3 +1,4 @@
+export PATH := $(PATH)
 .DEFAULT_GOAL := help
 
 UV := uv
@@ -36,7 +37,7 @@ build:
 	$(UV) run hatch build
 
 push_tag:
-	VERSION="$(uv version --short)"
+	$(eval VERSION := $(shell uv version --short))
 	git tag -a "v${VERSION}" -m "runpoint v${VERSION}"
 	git push origin "v${VERSION}"
 
