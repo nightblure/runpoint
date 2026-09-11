@@ -22,6 +22,7 @@ class LauncherContext:
 
     config_dir: Path
     target_args: tuple[str, ...]
+    global_config: domain.GlobalConfig
     entrypoints: tuple[domain.Entrypoint, ...]
 
 
@@ -68,7 +69,7 @@ app = typer.Typer(pretty_exceptions_enable=False)
 
 @app.command(
     help="Запускает одну точку входа Python или Go",
-    epilog=("Аргументы точки входа передаются после '--', например: runpoint testcur -- -k test_name"),
+    epilog="Аргументы точки входа передаются после '--', например: runpoint testcur -- -k test_name",
 )
 def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
     ctx: typer.Context,
@@ -104,6 +105,7 @@ def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
     launcher_ctx = cast("LauncherContext", ctx.obj)
     entrypoints = launcher_ctx.entrypoints
     target_args = launcher_ctx.target_args
+    global_config = launcher_ctx.global_config
 
     if list_entrypoints:
         print_entrypoints(entrypoints)
@@ -118,6 +120,18 @@ def run(  # noqa: PLR0913, PLR0917 -- signature defines the Typer CLI
         ctx.fail(f"Алиас {alias!r} не найден")
 
     entrypoint = alias_to_entrypoint[alias]
+
+    if entrypoint.debug_port is not None and debug_port is not None:
+        ctx.fail(f"debug_port не может быть определен одновременно в точке входа {alias!r} и аргументе CLI")
+
+    if global_config.debug_port is not None and debug_port is not None:
+        ctx.fail("debug_port не может быть определен одновременно в глобальном конфиге и аргументе CLI")
+
+    # приоритет отдается дебаг-порту в точке входа!
+    if entrypoint.debug_port is not None:
+        debug_port = entrypoint.debug_port
+    elif global_config.debug_port is not None:
+        debug_port = global_config.debug_port
 
     exit_code = use_cases.launch_entrypoint(
         debug=debug,
@@ -149,12 +163,15 @@ def main() -> None:
         message = f"Файл конфигурации {cfg_filename} не найден в {cwd} и родительских директориях"
         raise SystemExit(message)
 
-    entrypoints = data.load_entrypoints(config_path)
+    raw_config = data.load_raw_config(config_path)
+    entrypoints = data.load_entrypoints(raw_config)
+    global_config = data.load_global_config(raw_config)
 
     launcher_args, target_args = split_launcher_and_target_args(sys.argv[1:])
     launcher_context = LauncherContext(
         config_dir=config_path.parent,
         entrypoints=entrypoints,
+        global_config=global_config,
         target_args=tuple(target_args),
     )
 

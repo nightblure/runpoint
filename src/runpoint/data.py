@@ -5,11 +5,11 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from dotenv import dotenv_values as parse_dotenv
 
-from runpoint.domain import Entrypoint, entrypoint_factory
+from runpoint.domain import Entrypoint, GlobalConfig, entrypoint_factory
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,6 +115,7 @@ def _parse_entrypoint(
     venv = config.get("venv", ".venv")
     env_file = config.get("env_file", ".env")
     env = config.get("env", {})
+    debug_port = config.get("debug_port", None)
     load_env_file = config.get("load_env_file", False)
 
     command = _require_type(
@@ -147,6 +148,9 @@ def _parse_entrypoint(
         message=f"Поле env точки входа {alias!r} должно содержать только строки",
     )
 
+    if debug_port is not None:
+        debug_port = _require_type(debug_port, int, message=f"Поле debug_port точки входа {alias!r} должно быть int")
+
     try:
         return entrypoint_factory(
             cwd=cwd,
@@ -156,13 +160,45 @@ def _parse_entrypoint(
             alias=alias,
             command=command,
             load_env_file=load_env_file,
+            debug_port=debug_port,
         )
     except (RuntimeError, ValueError) as error:
         message = f"Некорректная точка входа {alias!r}: {error}"
         raise SystemExit(message) from error
 
 
-def load_entrypoints(config_path: Path) -> tuple[Entrypoint, ...]:
+def _parse_global_config(raw_global_config: object, known_fields: frozenset[str]) -> GlobalConfig:
+    if not isinstance(raw_global_config, dict):
+        message = "global config должен быть JSON-объектом"
+        raise SystemExit(message)
+
+    config = cast("dict[str, object]", raw_global_config)
+
+    debug_port: int | None = None
+
+    if "debug_port" in config:
+        debug_port = _require_type(
+            config["debug_port"],
+            int,
+            message="Поле debug_port в глобальном конфиге должно быть int",
+        )
+
+    unknown_fields = set(config).difference(known_fields)
+    if unknown_fields:
+        fields = ", ".join(sorted(unknown_fields))
+        message = f"Найдены неизвестные поля в глобальном конфиге: {fields}"
+        raise SystemExit(message)
+
+    try:
+        return GlobalConfig(
+            debug_port=debug_port,
+        )
+    except (RuntimeError, ValueError) as error:
+        message = f"Некорректный глобальный конфиг: {error}"
+        raise SystemExit(message) from error
+
+
+def load_raw_config(config_path: Path) -> dict[str, Any]:
     """Загружает и проверяет точки входа из конфигурации."""
     try:
         raw_config = load_jsonc(config_path)
@@ -173,18 +209,34 @@ def load_entrypoints(config_path: Path) -> tuple[Entrypoint, ...]:
         message = f"Ошибка парсинга конфига {config_path}: {error}"
         raise SystemExit(message) from error
 
-    if not isinstance(raw_config, list):
-        message = f"Корнем {config_path} должен быть список JSON-объектов"
+    if not isinstance(raw_config, dict):
+        message = f"Корнем {config_path} должен быть JSON-объект"
         raise SystemExit(message)
 
-    known_fields = frozenset[str](field.name for field in dataclasses.fields(Entrypoint) if field.init)
+    known_root_fields = ("global_config", "entrypoints")
+
+    for key in raw_config:
+        if key not in known_root_fields:
+            message = (
+                f"Найден неизвестный ключ {key!r} на первом уровне вложенности конфигурации\n"
+                f"Известные ключи: {known_root_fields}"
+            )
+            raise SystemExit(message)
 
     if not raw_config:
         message = "Конфигурация пуста"
         raise SystemExit(message)
 
-    items = cast("list[object]", raw_config)
-    entrypoints = tuple(_parse_entrypoint(item, known_fields=known_fields) for item in items)
+    return raw_config
+
+
+def load_entrypoints(raw_config: dict[str, Any]) -> tuple[Entrypoint, ...]:
+    """Загружает точки входа из конфигурации."""
+    known_entrypoint_fields = frozenset[str](field.name for field in dataclasses.fields(Entrypoint) if field.init)
+
+    raw_entrypoints = cast("list[object]", raw_config["entrypoints"])
+    entrypoints = tuple(_parse_entrypoint(item, known_fields=known_entrypoint_fields) for item in raw_entrypoints)
+
     aliases = [entrypoint.alias for entrypoint in entrypoints]
 
     if len(aliases) != len(set(aliases)):
@@ -192,6 +244,17 @@ def load_entrypoints(config_path: Path) -> tuple[Entrypoint, ...]:
         raise SystemExit(message)
 
     return entrypoints
+
+
+def load_global_config(raw_config: dict[str, Any]) -> GlobalConfig:
+    """Загружает глобальные параметры из конфигурации."""
+    known_global_config_fields = frozenset[str](field.name for field in dataclasses.fields(GlobalConfig) if field.init)
+    raw_global_config: dict[str, Any] = raw_config.get("global_config", {})
+
+    if not raw_global_config:
+        return GlobalConfig()
+
+    return _parse_global_config(raw_global_config, known_global_config_fields)
 
 
 def dotenv_values(dotenv_path: Path) -> dict[str, str]:
