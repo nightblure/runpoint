@@ -78,5 +78,5 @@ jobs:
           test "${#wheels[@]}" -eq 1
           wheel_name="$(basename "${wheels[0]}")"
           asset_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${wheel_name}"
-          notes="$(printf '## Установка\n\n```shell\npip install "%s"\n```' "${asset_url}")"
+          notes="$(printf '## Installing:\n\n```shell\npython3 -m pip install "%s"\n```' "${asset_url}")"
           gh release create "${GITHUB_REF_NAME}" dist/* --notes "${notes}" --generate-notes --verify-tag
